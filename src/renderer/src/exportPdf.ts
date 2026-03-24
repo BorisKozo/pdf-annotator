@@ -1,6 +1,7 @@
-import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
+import { PDFDocument, rgb, LineCapStyle, type PDFFont, type PDFPage } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import type { Annotation } from './types'
+import { isTextAnnotation } from './types'
 import { getTextDirection } from './bidi'
 import {
   getFontBytesForExport,
@@ -76,7 +77,7 @@ export async function buildAnnotatedPdfBytes(
     return font
   }
 
-  const anyBold = annotations.some((a) => a.bold === true)
+  const anyBold = annotations.some((a) => isTextAnnotation(a) && a.bold === true)
   let boldHe: Awaited<ReturnType<typeof embedFor>> | null = null
   let boldLat: Awaited<ReturnType<typeof embedFor>> | null = null
   if (anyBold) {
@@ -87,6 +88,25 @@ export async function buildAnnotatedPdfBytes(
   for (const ann of annotations) {
     const page = doc.getPage(ann.page - 1)
     const color = rgb(ann.r, ann.g, ann.b)
+
+    if (ann.kind === 'pen') {
+      const t = ann.strokeWidth
+      for (const seg of ann.segments) {
+        for (let i = 1; i < seg.length; i++) {
+          const a = seg[i - 1]!
+          const b = seg[i]!
+          page.drawLine({
+            start: { x: a.x, y: a.y },
+            end: { x: b.x, y: b.y },
+            thickness: t,
+            color,
+            lineCap: LineCapStyle.Round,
+          })
+        }
+      }
+      continue
+    }
+
     const rtl = getTextDirection(ann.text) === 'rtl'
     if (ann.bold === true && boldHe && boldLat) {
       drawBoldSegmented(

@@ -147,6 +147,20 @@
         border-bottom: 1px solid var(--border);
       }
 
+      .section.hidden {
+        display: none;
+      }
+
+      .mode-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .mode-row .btn {
+        flex: 1;
+        justify-content: center;
+      }
+
       .label {
         font-size: 10px;
         letter-spacing: 0.12em;
@@ -441,7 +455,18 @@
 
     <div id="app-body">
       <aside id="sidebar">
-        <div class="section">
+        <div class="section" id="section-mode">
+          <div class="label">Mode</div>
+          <div class="mode-row">
+            <button type="button" class="btn toggle active" id="mode-text" title="Add text annotations">
+              Text
+            </button>
+            <button type="button" class="btn toggle" id="mode-pen" title="Draw with the pen">
+              Pen
+            </button>
+          </div>
+        </div>
+        <div class="section" id="section-text-style">
           <div class="label">Text style</div>
           <div class="row">
             <label for="font-select">Font</label>
@@ -464,6 +489,19 @@
               Bold
             </button>
           </div>
+        </div>
+        <div class="section hidden" id="section-pen-style">
+          <div class="label">Pen</div>
+          <div class="row">
+            <label for="pen-width-num">Width</label>
+            <input type="number" id="pen-width-num" min="1" max="48" value="2" step="1" />
+            <input type="range" id="pen-width-range" min="1" max="24" value="2" />
+          </div>
+          <p style="font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.4">
+            Line color uses <strong style="color: var(--text); font-weight: 500">Color</strong> below.
+            Hold <strong style="color: var(--text); font-weight: 500">Shift</strong> to chain several strokes into
+            one annotation; release Shift to save.
+          </p>
         </div>
         <div class="section">
           <div class="label">Color</div>

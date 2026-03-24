@@ -1,8 +1,9 @@
 import { FONT_CATALOG } from './fonts'
 import { openPdfFromBuffer, renderPdfPage, getPdfJsDocument } from './pdfSession'
-import { drawAnnotationOverlay, findAnnotationAtCanvasPoint } from './overlay'
+import { drawAnnotationOverlay, findAnnotationAtCanvasPoint, type PenDrawPreview } from './overlay'
 import { buildAnnotatedPdfBytes } from './exportPdf'
-import type { Annotation } from './types'
+import type { Annotation, PdfPoint } from './types'
+import { isPenAnnotation, isTextAnnotation } from './types'
 import { getFontEntry } from './fonts'
 
 const PALETTE = [
@@ -30,6 +31,48 @@ let nextAnnId = 1
 
 let currentColor = { r: 0, g: 0, b: 0, hex: '#000000' }
 let currentBold = false
+
+type EditorMode = 'text' | 'pen'
+let editorMode: EditorMode = 'text'
+let penStrokeWidthPdf = 2
+
+type ActivePenStroke = {
+  page: number
+  points: PdfPoint[]
+  strokeWidth: number
+  r: number
+  g: number
+  b: number
+  hex: string
+}
+
+/** Single click-drag stroke (no Shift). */
+let activePenStroke: ActivePenStroke | null = null
+
+/** Shift held: multiple strokes committed together when Shift is released. */
+type ShiftPenCompose = {
+  page: number
+  segments: PdfPoint[][]
+  current: PdfPoint[]
+  strokeWidth: number
+  r: number
+  g: number
+  b: number
+  hex: string
+}
+let shiftPenCompose: ShiftPenCompose | null = null
+
+const MIN_PEN_SEGMENT_PDF = 0.2
+
+function penHasDrawableSegments(segments: PdfPoint[][]): boolean {
+  return segments.some((s) => s.length >= 2)
+}
+
+function penPointsFarEnough(a: PdfPoint, b: PdfPoint): boolean {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  return dx * dx + dy * dy >= MIN_PEN_SEGMENT_PDF * MIN_PEN_SEGMENT_PDF
+}
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const h = hex.replace('#', '')
@@ -88,6 +131,83 @@ function getCurrentFontSize(): number {
   return Number.isFinite(n) ? Math.min(200, Math.max(6, n)) : 14
 }
 
+function getActivePenPreviewForOverlay(): PenDrawPreview | null {
+  if (activePenStroke) {
+    const { page, points, strokeWidth, hex } = activePenStroke
+    return { page, points, strokeWidth, hex }
+  }
+  if (shiftPenCompose) {
+    return {
+      page: shiftPenCompose.page,
+      strokeWidth: shiftPenCompose.strokeWidth,
+      hex: shiftPenCompose.hex,
+      segments: shiftPenCompose.segments,
+      current: shiftPenCompose.current,
+    }
+  }
+  return null
+}
+
+/** Drop shift-compose session without saving (new PDF, etc.). */
+function discardShiftPenCompose(): void {
+  shiftPenCompose = null
+}
+
+function flushShiftCurrentIntoSegments(): void {
+  if (!shiftPenCompose) return
+  const cur = shiftPenCompose.current
+  if (cur.length >= 2) {
+    shiftPenCompose.segments.push([...cur])
+  }
+  shiftPenCompose.current = []
+}
+
+/** Commits when Shift is released (or leaving pen / page / zoom). */
+function finalizeShiftPenCompose(): void {
+  if (!shiftPenCompose) return
+  flushShiftCurrentIntoSegments()
+  const segs = shiftPenCompose.segments.map((s) => s.slice())
+  const cap = shiftPenCompose
+  shiftPenCompose = null
+  activePenStroke = null
+  if (!penHasDrawableSegments(segs)) {
+    void refreshPage()
+    renderAnnotationsList()
+    return
+  }
+  const newId = nextAnnId++
+  annotations.push({
+    kind: 'pen',
+    id: newId,
+    page: cap.page,
+    segments: segs,
+    strokeWidth: cap.strokeWidth,
+    r: cap.r,
+    g: cap.g,
+    b: cap.b,
+    hex: cap.hex,
+  })
+  selectedId = newId
+  void refreshPage()
+  renderAnnotationsList()
+}
+
+function redrawOverlayOnly(): void {
+  if (!getPdfJsDocument()) return
+  const overlay = overlayCanvasEl()
+  const ctx = overlay.getContext('2d')
+  if (!ctx) return
+  drawAnnotationOverlay(
+    ctx,
+    overlay.height,
+    scale,
+    currentPage,
+    annotations,
+    selectedId,
+    getActivePenPreviewForOverlay(),
+  )
+}
+
 async function refreshPage(): Promise<void> {
   if (!getPdfJsDocument()) return
   const pdfCanvas = pdfCanvasEl()
@@ -96,7 +216,15 @@ async function refreshPage(): Promise<void> {
   const overlay = overlayCanvasEl()
   const ctx = overlay.getContext('2d')
   if (!ctx) return
-  drawAnnotationOverlay(ctx, overlay.height, scale, currentPage, annotations, selectedId)
+  drawAnnotationOverlay(
+    ctx,
+    overlay.height,
+    scale,
+    currentPage,
+    annotations,
+    selectedId,
+    getActivePenPreviewForOverlay(),
+  )
   updatePageUi()
 }
 
@@ -124,7 +252,29 @@ function updateBoldButton(): void {
   btn.setAttribute('aria-pressed', String(currentBold))
 }
 
-function applyColor(hex: string): void {
+function updateModeUi(): void {
+  const textMode = editorMode === 'text'
+  $('section-text-style').classList.toggle('hidden', !textMode)
+  $('section-pen-style').classList.toggle('hidden', textMode)
+  ;(document.getElementById('mode-text') as HTMLButtonElement).classList.toggle('active', textMode)
+  ;(document.getElementById('mode-pen') as HTMLButtonElement).classList.toggle('active', !textMode)
+}
+
+function getPenStrokeWidthFromUi(): number {
+  const num = document.getElementById('pen-width-num') as HTMLInputElement
+  let v = parseInt(num.value, 10)
+  if (!Number.isFinite(v)) v = 2
+  return Math.min(48, Math.max(1, v))
+}
+
+function syncPenWidthInputs(v: number): void {
+  const num = document.getElementById('pen-width-num') as HTMLInputElement
+  const range = document.getElementById('pen-width-range') as HTMLInputElement
+  num.value = String(v)
+  range.value = String(Math.min(24, v))
+}
+
+function syncColorUi(hex: string): void {
   const rgb = hexToRgb(hex)
   currentColor = { r: rgb.r, g: rgb.g, b: rgb.b, hex }
   ;(document.getElementById('color-picker') as HTMLInputElement).value = hex
@@ -132,8 +282,13 @@ function applyColor(hex: string): void {
   document.querySelectorAll('.swatch').forEach((el) => {
     el.classList.toggle('selected', (el as HTMLElement).dataset.hex === hex)
   })
+}
+
+function applyColor(hex: string): void {
+  const rgb = hexToRgb(hex)
+  syncColorUi(hex)
   const sel = selectedId !== null ? annotations.find((a) => a.id === selectedId) : null
-  if (sel) {
+  if (sel && isTextAnnotation(sel)) {
     sel.hex = hex
     sel.r = rgb.r
     sel.g = rgb.g
@@ -193,9 +348,16 @@ function renderAnnotationsList(): void {
   for (const ann of sorted) {
     const row = document.createElement('div')
     row.className = 'ann-row' + (ann.id === selectedId ? ' active' : '')
+    const label =
+      isTextAnnotation(ann)
+        ? `${ann.bold === true ? '<strong style="opacity:.85">B</strong> ' : ''}p${ann.page}: Text · ${escapeHtml(ann.text)}`
+        : `p${ann.page}: Pen · ${ann.segments.length} line(s) · ${ann.segments.reduce((n, s) => n + s.length, 0)} pts`
+    const title = isTextAnnotation(ann)
+      ? `Text: ${escapeAttr(ann.text)}`
+      : `Pen (${ann.segments.length} line(s))`
     row.innerHTML = `
       <span class="ann-dot" style="background:${ann.hex}"></span>
-      <span class="ann-label" title="${escapeAttr(ann.text)}">${ann.bold === true ? '<strong style="opacity:.85">B</strong> ' : ''}p${ann.page}: ${escapeHtml(ann.text)}</span>
+      <span class="ann-label" title="${title}">${label}</span>
       <button type="button" class="ann-del" data-id="${ann.id}" title="Delete">✕</button>
     `
     row.addEventListener('click', (ev) => {
@@ -223,27 +385,31 @@ function escapeAttr(s: string): string {
 }
 
 async function selectAnnotationById(id: number): Promise<void> {
+  if (shiftPenCompose) finalizeShiftPenCompose()
   selectedId = id
   const ann = annotations.find((a) => a.id === id)
   if (!ann) return
   if (ann.page !== currentPage) {
+    activePenStroke = null
     currentPage = ann.page
     await refreshPage()
   } else {
-    const overlay = overlayCanvasEl()
-    const ctx = overlay.getContext('2d')
-    if (ctx) {
-      drawAnnotationOverlay(ctx, overlay.height, scale, currentPage, annotations, selectedId)
-    }
+    redrawOverlayOnly()
   }
-  ;(document.getElementById('font-select') as HTMLSelectElement).value = ann.fontId
-  ;(document.getElementById('font-size-num') as HTMLInputElement).value = String(ann.size)
-  ;(document.getElementById('font-size-range') as HTMLInputElement).value = String(
-    Math.min(72, ann.size),
-  )
-  currentBold = ann.bold === true
-  updateBoldButton()
-  applyColor(ann.hex)
+  if (isTextAnnotation(ann)) {
+    ;(document.getElementById('font-select') as HTMLSelectElement).value = ann.fontId
+    ;(document.getElementById('font-size-num') as HTMLInputElement).value = String(ann.size)
+    ;(document.getElementById('font-size-range') as HTMLInputElement).value = String(
+      Math.min(72, ann.size),
+    )
+    currentBold = ann.bold === true
+    updateBoldButton()
+    applyColor(ann.hex)
+  } else if (isPenAnnotation(ann)) {
+    syncColorUi(ann.hex)
+    penStrokeWidthPdf = ann.strokeWidth
+    syncPenWidthInputs(ann.strokeWidth)
+  }
   renderAnnotationsList()
 }
 
@@ -287,6 +453,7 @@ function showInlineInput(clientX: number, clientY: number, pdfX: number, pdfY: n
     const t = text.trim()
     if (t) {
       const ann: Annotation = {
+        kind: 'text',
         id: nextAnnId++,
         page: currentPage,
         x: pdfX,
@@ -334,9 +501,13 @@ async function applyOpenedPdf(buffer: ArrayBuffer, pathOrName: string): Promise<
   annotations = []
   selectedId = null
   nextAnnId = 1
+  activePenStroke = null
+  discardShiftPenCompose()
   currentPage = 1
   scale = 1
   currentBold = false
+  editorMode = 'text'
+  updateModeUi()
   updateBoldButton()
   updateZoomLabel()
   const base = pathOrName.replace(/\\/g, '/').split('/').pop() ?? 'document.pdf'
@@ -408,14 +579,18 @@ async function savePdfFlow(): Promise<void> {
 async function changePage(delta: number): Promise<void> {
   const next = currentPage + delta
   if (next < 1 || next > totalPages) return
+  finalizeShiftPenCompose()
   currentPage = next
   selectedId = null
+  activePenStroke = null
   await refreshPage()
   renderAnnotationsList()
 }
 
 function setZoom(next: number): void {
   scale = Math.max(0.35, Math.min(4, next))
+  finalizeShiftPenCompose()
+  activePenStroke = null
   updateZoomLabel()
   void refreshPage()
 }
@@ -460,7 +635,7 @@ function bindStyleControls(): void {
     num.value = String(v)
     range.value = String(Math.min(72, v))
     const target = selectedId !== null ? annotations.find((a) => a.id === selectedId) : null
-    if (target) {
+    if (target && isTextAnnotation(target)) {
       target.size = v
       target.fontId = sel.value
       void refreshPage()
@@ -482,7 +657,7 @@ function bindStyleControls(): void {
     currentBold = !currentBold
     updateBoldButton()
     const target = selectedId !== null ? annotations.find((a) => a.id === selectedId) : null
-    if (target) {
+    if (target && isTextAnnotation(target)) {
       target.bold = currentBold
       void refreshPage()
       renderAnnotationsList()
@@ -524,17 +699,218 @@ function bindAnnotationArrowNudge(): void {
     const ann = annotations.find((a) => a.id === selectedId)
     if (!ann || ann.page !== currentPage) return
     e.preventDefault()
-    ann.x += dx / scale
-    ann.y -= dy / scale
+    const dPdfX = dx / scale
+    const dPdfY = -dy / scale
+    if (isTextAnnotation(ann)) {
+      ann.x += dPdfX
+      ann.y += dPdfY
+    } else {
+      for (const seg of ann.segments) {
+        for (const p of seg) {
+          p.x += dPdfX
+          p.y += dPdfY
+        }
+      }
+    }
     void refreshPage()
     renderAnnotationsList()
   })
 }
 
+function canvasPointFromClient(
+  overlay: HTMLCanvasElement,
+  clientX: number,
+  clientY: number,
+): PdfPoint {
+  const rect = overlay.getBoundingClientRect()
+  const px = clientX - rect.left
+  const py = clientY - rect.top
+  return {
+    x: px / scale,
+    y: (overlay.height - py) / scale,
+  }
+}
+
+function commitActivePenIfAny(): void {
+  if (!activePenStroke) return
+  const cap = activePenStroke
+  const pts = cap.points
+  activePenStroke = null
+  if (pts.length < 2) {
+    redrawOverlayOnly()
+    return
+  }
+  const newId = nextAnnId++
+  annotations.push({
+    kind: 'pen',
+    id: newId,
+    page: cap.page,
+    segments: [[...pts]],
+    strokeWidth: cap.strokeWidth,
+    r: cap.r,
+    g: cap.g,
+    b: cap.b,
+    hex: cap.hex,
+  })
+  selectedId = newId
+  void refreshPage()
+  renderAnnotationsList()
+}
+
+function bindModeAndPen(): void {
+  $('mode-text').addEventListener('click', () => {
+    if (editorMode === 'text') return
+    finalizeShiftPenCompose()
+    activePenStroke = null
+    editorMode = 'text'
+    updateModeUi()
+    void refreshPage()
+  })
+  $('mode-pen').addEventListener('click', () => {
+    if (editorMode === 'pen') return
+    finalizeShiftPenCompose()
+    activePenStroke = null
+    editorMode = 'pen'
+    updateModeUi()
+    void refreshPage()
+  })
+  const num = document.getElementById('pen-width-num') as HTMLInputElement
+  const range = document.getElementById('pen-width-range') as HTMLInputElement
+  const syncPen = () => {
+    let v = parseInt(num.value, 10)
+    if (!Number.isFinite(v)) v = 2
+    v = Math.min(48, Math.max(1, v))
+    num.value = String(v)
+    range.value = String(Math.min(24, v))
+    penStrokeWidthPdf = v
+  }
+  num.addEventListener('change', syncPen)
+  range.addEventListener('input', () => {
+    num.value = range.value
+    syncPen()
+  })
+  syncPen()
+}
+
+function bindShiftPenFinalize(): void {
+  window.addEventListener('keyup', (e) => {
+    if (e.shiftKey) return
+    if (editorMode !== 'pen') return
+    finalizeShiftPenCompose()
+  })
+}
+
 function bindCanvas(): void {
   const overlay = overlayCanvasEl()
+
+  overlay.addEventListener('pointerdown', (e) => {
+    if (!getPdfJsDocument()) return
+    if (editorMode !== 'pen') return
+    if (e.button !== 0) return
+    if (isFormFieldTarget(e.target)) return
+    e.preventDefault()
+    overlay.setPointerCapture(e.pointerId)
+    penStrokeWidthPdf = getPenStrokeWidthFromUi()
+    const p0 = canvasPointFromClient(overlay, e.clientX, e.clientY)
+    selectedId = null
+
+    if (e.shiftKey) {
+      activePenStroke = null
+      if (shiftPenCompose && shiftPenCompose.page !== currentPage) {
+        finalizeShiftPenCompose()
+      }
+      if (!shiftPenCompose) {
+        shiftPenCompose = {
+          page: currentPage,
+          segments: [],
+          current: [p0],
+          strokeWidth: penStrokeWidthPdf,
+          hex: currentColor.hex,
+          r: currentColor.r,
+          g: currentColor.g,
+          b: currentColor.b,
+        }
+      } else {
+        const cur = shiftPenCompose.current
+        if (cur.length >= 2) {
+          shiftPenCompose.segments.push([...cur])
+        }
+        shiftPenCompose.current = [p0]
+      }
+    } else {
+      if (shiftPenCompose) {
+        finalizeShiftPenCompose()
+      }
+      activePenStroke = {
+        page: currentPage,
+        points: [p0],
+        strokeWidth: penStrokeWidthPdf,
+        hex: currentColor.hex,
+        r: currentColor.r,
+        g: currentColor.g,
+        b: currentColor.b,
+      }
+    }
+    renderAnnotationsList()
+    redrawOverlayOnly()
+  })
+
+  const endPen = (e: PointerEvent) => {
+    if (editorMode !== 'pen') return
+    try {
+      overlay.releasePointerCapture(e.pointerId)
+    } catch {
+      /* no capture */
+    }
+    if (shiftPenCompose) {
+      flushShiftCurrentIntoSegments()
+      redrawOverlayOnly()
+      renderAnnotationsList()
+      return
+    }
+    if (activePenStroke) {
+      commitActivePenIfAny()
+    }
+  }
+  overlay.addEventListener('pointerup', endPen)
+  overlay.addEventListener('pointercancel', endPen)
+
+  overlay.addEventListener('pointermove', (e) => {
+    if (!getPdfJsDocument()) return
+    const rect = overlay.getBoundingClientRect()
+    const px = e.clientX - rect.left
+    const py = e.clientY - rect.top
+    const x = Math.round(px / scale)
+    const y = Math.round((overlay.height - py) / scale)
+    $('st-coords').textContent = `${x}, ${y}`
+
+    if (
+      editorMode === 'pen' &&
+      shiftPenCompose &&
+      shiftPenCompose.page === currentPage &&
+      shiftPenCompose.current.length > 0
+    ) {
+      e.preventDefault()
+      const p = canvasPointFromClient(overlay, e.clientX, e.clientY)
+      const last = shiftPenCompose.current[shiftPenCompose.current.length - 1]!
+      if (penPointsFarEnough(last, p)) shiftPenCompose.current.push(p)
+      redrawOverlayOnly()
+    } else if (
+      editorMode === 'pen' &&
+      activePenStroke &&
+      activePenStroke.page === currentPage
+    ) {
+      e.preventDefault()
+      const p = canvasPointFromClient(overlay, e.clientX, e.clientY)
+      const last = activePenStroke.points[activePenStroke.points.length - 1]!
+      if (penPointsFarEnough(last, p)) activePenStroke.points.push(p)
+      redrawOverlayOnly()
+    }
+  })
+
   overlay.addEventListener('click', (e) => {
     if (!getPdfJsDocument()) return
+    if (editorMode === 'pen') return
     const rect = overlay.getBoundingClientRect()
     const px = e.clientX - rect.left
     const py = e.clientY - rect.top
@@ -559,16 +935,6 @@ function bindCanvas(): void {
     const pdfX = px / scale
     const pdfY = (overlay.height - py) / scale
     showInlineInput(e.clientX, e.clientY, pdfX, pdfY)
-  })
-
-  overlay.addEventListener('mousemove', (e) => {
-    if (!getPdfJsDocument()) return
-    const rect = overlay.getBoundingClientRect()
-    const px = e.clientX - rect.left
-    const py = e.clientY - rect.top
-    const x = Math.round(px / scale)
-    const y = Math.round((overlay.height - py) / scale)
-    $('st-coords').textContent = `${x}, ${y}`
   })
 }
 
@@ -624,10 +990,13 @@ initFontSelect()
 initPalette()
 applyColor(PALETTE[0]!)
 updateBoldButton()
+updateModeUi()
 bindToolbar()
 bindPdfFileInput()
+bindModeAndPen()
 bindStyleControls()
 bindCanvas()
+bindShiftPenFinalize()
 bindAnnotationArrowNudge()
 bindZoom()
 bindDragDrop()
