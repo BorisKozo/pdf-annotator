@@ -15,6 +15,7 @@
     "pdfjs-dist": "^5.5.207"
   },
   "devDependencies": {
+    "@fontsource/noto-sans-hebrew": "^5.2.8",
     "@types/node": "^25.5.0",
     "electron": "^41.0.3",
     "electron-vite": "^5.0.0",

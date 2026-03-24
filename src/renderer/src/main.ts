@@ -6,6 +6,7 @@ import type { Annotation } from './types'
 import { getFontEntry } from './fonts'
 
 const PALETTE = [
+  '#000000',
   '#f8fafc',
   '#0f172a',
   '#5b8cff',
@@ -27,7 +28,8 @@ let annotations: Annotation[] = []
 let selectedId: number | null = null
 let nextAnnId = 1
 
-let currentColor = { r: 1, g: 1, b: 1, hex: '#ffffff' }
+let currentColor = { r: 0, g: 0, b: 0, hex: '#000000' }
+let currentBold = false
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const h = hex.replace('#', '')
@@ -36,6 +38,24 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
     g: parseInt(h.slice(2, 4), 16) / 255,
     b: parseInt(h.slice(4, 6), 16) / 255,
   }
+}
+
+/** True when the ink color is white or very light (needs a dark input field for contrast). */
+function hexIsNearWhite(hex: string): boolean {
+  let full = hex.replace('#', '').toLowerCase()
+  if (full.length === 3) {
+    full = full
+      .split('')
+      .map((c) => c + c)
+      .join('')
+  }
+  if (full.length !== 6) return false
+  const r = parseInt(full.slice(0, 2), 16)
+  const g = parseInt(full.slice(2, 4), 16)
+  const b = parseInt(full.slice(4, 6), 16)
+  if (![r, g, b].every((n) => Number.isFinite(n))) return false
+  const lum = (r * 299 + g * 587 + b * 114) / 1000
+  return lum >= 230
 }
 
 function $(id: string): HTMLElement {
@@ -94,6 +114,16 @@ function updateZoomLabel(): void {
   $('zoom-pct').textContent = `${pct}%`
 }
 
+function updateSaveButtonState(): void {
+  ;(document.getElementById('btn-save') as HTMLButtonElement).disabled = pdfSourceBytes === null
+}
+
+function updateBoldButton(): void {
+  const btn = $('btn-bold') as HTMLButtonElement
+  btn.classList.toggle('active', currentBold)
+  btn.setAttribute('aria-pressed', String(currentBold))
+}
+
 function applyColor(hex: string): void {
   const rgb = hexToRgb(hex)
   currentColor = { r: rgb.r, g: rgb.g, b: rgb.b, hex }
@@ -133,7 +163,10 @@ function initPalette(): void {
     sw.className = 'swatch'
     sw.dataset.hex = hex
     sw.style.background = hex
-    sw.style.borderColor = hex === '#f8fafc' ? 'rgba(255,255,255,0.25)' : 'transparent'
+    sw.style.borderColor =
+      hex === '#f8fafc' || hex === '#000000'
+        ? 'rgba(255,255,255,0.25)'
+        : 'transparent'
     sw.title = hex
     sw.addEventListener('click', () => applyColor(hex))
     root.appendChild(sw)
@@ -162,7 +195,7 @@ function renderAnnotationsList(): void {
     row.className = 'ann-row' + (ann.id === selectedId ? ' active' : '')
     row.innerHTML = `
       <span class="ann-dot" style="background:${ann.hex}"></span>
-      <span class="ann-label" title="${escapeAttr(ann.text)}">p${ann.page}: ${escapeHtml(ann.text)}</span>
+      <span class="ann-label" title="${escapeAttr(ann.text)}">${ann.bold === true ? '<strong style="opacity:.85">B</strong> ' : ''}p${ann.page}: ${escapeHtml(ann.text)}</span>
       <button type="button" class="ann-del" data-id="${ann.id}" title="Delete">✕</button>
     `
     row.addEventListener('click', (ev) => {
@@ -208,6 +241,8 @@ async function selectAnnotationById(id: number): Promise<void> {
   ;(document.getElementById('font-size-range') as HTMLInputElement).value = String(
     Math.min(72, ann.size),
   )
+  currentBold = ann.bold === true
+  updateBoldButton()
   applyColor(ann.hex)
   renderAnnotationsList()
 }
@@ -226,12 +261,21 @@ function showInlineInput(clientX: number, clientY: number, pdfX: number, pdfY: n
   const stackRect = stack.getBoundingClientRect()
   const size = getCurrentFontSize()
   const family = getFontEntry(getCurrentFontId()).cssFamily
+  const inkHex = currentColor.hex
+  const lightField = hexIsNearWhite(inkHex)
   input.style.display = 'block'
   input.style.left = `${clientX - stackRect.left}px`
   input.style.top = `${clientY - stackRect.top - size * scale}px`
   input.style.fontSize = `${size * scale}px`
   input.style.fontFamily = family
-  input.style.color = currentColor.hex
+  input.style.fontWeight = currentBold ? 'bold' : '400'
+  input.style.backgroundColor = lightField ? '#000000' : '#ffffff'
+  input.style.color = inkHex
+  input.style.caretColor = inkHex
+  input.style.borderBottom = '2px solid #5b8cff'
+  input.style.boxShadow = lightField
+    ? '0 0 0 1px rgba(255,255,255,0.2), 0 4px 20px rgba(0,0,0,0.45)'
+    : '0 0 0 1px rgba(0,0,0,0.12), 0 4px 20px rgba(0,0,0,0.2)'
   input.value = ''
   input.focus()
 
@@ -254,6 +298,7 @@ function showInlineInput(clientX: number, clientY: number, pdfX: number, pdfY: n
         g: currentColor.g,
         b: currentColor.b,
         hex: currentColor.hex,
+        bold: currentBold,
       }
       annotations.push(ann)
       selectedId = ann.id
@@ -283,46 +328,76 @@ function showInlineInput(clientX: number, clientY: number, pdfX: number, pdfY: n
   }
 }
 
-async function openPdfFlow(): Promise<void> {
-  if (!window.electronAPI) {
-    console.error('electronAPI missing — open in Electron')
-    return
-  }
-  const res = await window.electronAPI.openPDFFile()
-  if (res.canceled) return
-  pdfSourceBytes = res.data.slice(0)
-  sourceFilePath = res.filePath
+async function applyOpenedPdf(buffer: ArrayBuffer, pathOrName: string): Promise<void> {
+  pdfSourceBytes = buffer.slice(0)
+  sourceFilePath = pathOrName
   annotations = []
   selectedId = null
   nextAnnId = 1
   currentPage = 1
   scale = 1
+  currentBold = false
+  updateBoldButton()
   updateZoomLabel()
-  const base = sourceFilePath.replace(/\\/g, '/').split('/').pop() ?? 'document.pdf'
+  const base = pathOrName.replace(/\\/g, '/').split('/').pop() ?? 'document.pdf'
   $('st-file').textContent = base
   totalPages = await openPdfFromBuffer(pdfSourceBytes)
   $('drop-hint').classList.add('hidden')
   $('canvas-stack').classList.add('visible')
-  ;(document.getElementById('btn-save') as HTMLButtonElement).disabled = false
+  updateSaveButtonState()
   await refreshPage()
   renderAnnotationsList()
 }
 
+async function openPdfFlow(): Promise<void> {
+  try {
+    if (window.electronAPI) {
+      const res = await window.electronAPI.openPDFFile()
+      if (res.canceled) return
+      await applyOpenedPdf(res.data, res.filePath)
+      return
+    }
+    const input = document.getElementById('pdf-file-input') as HTMLInputElement
+    input.value = ''
+    input.click()
+  } catch (e) {
+    console.error(e)
+    const msg = e instanceof Error ? e.message : String(e)
+    window.alert(`Could not open PDF: ${msg}`)
+  }
+}
+
 async function savePdfFlow(): Promise<void> {
-  if (!window.electronAPI || !pdfSourceBytes) return
+  if (!pdfSourceBytes) return
   try {
     const bytes = await buildAnnotatedPdfBytes(pdfSourceBytes, annotations)
     const suggested =
       sourceFilePath != null
         ? sourceFilePath.replace(/\.pdf$/i, '') + '_annotated.pdf'
         : 'annotated.pdf'
-    const out = await window.electronAPI.savePDFBytes(
-      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-      suggested,
-    )
-    if (!out.canceled) {
-      $('st-file').textContent = out.filePath.replace(/\\/g, '/').split('/').pop() ?? 'saved.pdf'
+    const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+
+    if (window.electronAPI) {
+      const out = await window.electronAPI.savePDFBytes(data, suggested)
+      if (!out.canceled) {
+        $('st-file').textContent =
+          out.filePath.replace(/\\/g, '/').split('/').pop() ?? 'saved.pdf'
+      }
+      return
     }
+
+    const filename = suggested.replace(/\\/g, '/').split('/').pop() ?? 'annotated.pdf'
+    const blob = new Blob([data], { type: 'application/pdf' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    $('st-file').textContent = filename
   } catch (e) {
     console.error(e)
     const msg = e instanceof Error ? e.message : String(e)
@@ -343,6 +418,27 @@ function setZoom(next: number): void {
   scale = Math.max(0.35, Math.min(4, next))
   updateZoomLabel()
   void refreshPage()
+}
+
+function bindPdfFileInput(): void {
+  const input = document.getElementById('pdf-file-input') as HTMLInputElement
+  input.addEventListener('change', () => {
+    const f = input.files?.[0]
+    input.value = ''
+    if (!f) return
+    const ok =
+      f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+    if (!ok) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      void applyOpenedPdf(reader.result as ArrayBuffer, f.name).catch((e) => {
+        console.error(e)
+        const msg = e instanceof Error ? e.message : String(e)
+        window.alert(`Could not open PDF: ${msg}`)
+      })
+    }
+    reader.readAsArrayBuffer(f)
+  })
 }
 
 function bindToolbar(): void {
@@ -381,6 +477,17 @@ function bindStyleControls(): void {
 
   const cp = document.getElementById('color-picker') as HTMLInputElement
   cp.addEventListener('input', (e) => applyColor((e.target as HTMLInputElement).value))
+
+  $('btn-bold').addEventListener('click', () => {
+    currentBold = !currentBold
+    updateBoldButton()
+    const target = selectedId !== null ? annotations.find((a) => a.id === selectedId) : null
+    if (target) {
+      target.bold = currentBold
+      void refreshPage()
+      renderAnnotationsList()
+    }
+  })
 }
 
 function bindCanvas(): void {
@@ -456,25 +563,17 @@ function bindDragDrop(): void {
     e.preventDefault()
     document.body.classList.remove('drag-target')
     const f = e.dataTransfer?.files?.[0]
-    if (!f || f.type !== 'application/pdf') return
+    if (!f) return
+    const ok =
+      f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+    if (!ok) return
     const reader = new FileReader()
-    reader.onload = async () => {
-      const buf = reader.result as ArrayBuffer
-      pdfSourceBytes = buf.slice(0)
-      sourceFilePath = f.name
-      annotations = []
-      selectedId = null
-      nextAnnId = 1
-      currentPage = 1
-      scale = 1
-      updateZoomLabel()
-      $('st-file').textContent = f.name
-      totalPages = await openPdfFromBuffer(pdfSourceBytes)
-      $('drop-hint').classList.add('hidden')
-      $('canvas-stack').classList.add('visible')
-      ;(document.getElementById('btn-save') as HTMLButtonElement).disabled = false
-      await refreshPage()
-      renderAnnotationsList()
+    reader.onload = () => {
+      void applyOpenedPdf(reader.result as ArrayBuffer, f.name).catch((e) => {
+        console.error(e)
+        const msg = e instanceof Error ? e.message : String(e)
+        window.alert(`Could not open PDF: ${msg}`)
+      })
     }
     reader.readAsArrayBuffer(f)
   })
@@ -483,7 +582,9 @@ function bindDragDrop(): void {
 initFontSelect()
 initPalette()
 applyColor(PALETTE[0]!)
+updateBoldButton()
 bindToolbar()
+bindPdfFileInput()
 bindStyleControls()
 bindCanvas()
 bindZoom()

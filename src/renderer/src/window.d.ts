@@ -2,7 +2,8 @@ export {}
 
 declare global {
   interface Window {
-    electronAPI: {
+    /** Present when the app runs inside Electron with preload. */
+    electronAPI?: {
       openPDFFile: () => Promise<
         { canceled: true } | { canceled: false; filePath: string; data: ArrayBuffer }
       >

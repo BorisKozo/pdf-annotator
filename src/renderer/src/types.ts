@@ -6,6 +6,8 @@ export interface Annotation {
   text: string
   fontId: string
   size: number
+  /** When true, uses weight 700 in preview and bold subset fonts in exported PDF. */
+  bold?: boolean
   r: number
   g: number
   b: number

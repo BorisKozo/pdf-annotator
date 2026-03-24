@@ -31,10 +31,13 @@ function createWindow(): void {
 
 ipcMain.handle(
   'pdf:open',
-  async (): Promise<
+  async (
+    event,
+  ): Promise<
     { canceled: true } | { canceled: false; filePath: string; data: ArrayBuffer }
   > => {
-    const { canceled, filePaths } = await dialog.showOpenDialog({
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const { canceled, filePaths } = await dialog.showOpenDialog(parent ?? undefined, {
       properties: ['openFile'],
       filters: [{ name: 'PDF', extensions: ['pdf'] }],
     })
@@ -49,11 +52,12 @@ ipcMain.handle(
 ipcMain.handle(
   'pdf:save',
   async (
-    _e,
+    event,
     data: ArrayBuffer,
     defaultPath?: string,
   ): Promise<{ canceled: true } | { canceled: false; filePath: string }> => {
-    const { canceled, filePath } = await dialog.showSaveDialog({
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const { canceled, filePath } = await dialog.showSaveDialog(parent ?? undefined, {
       defaultPath,
       filters: [{ name: 'PDF', extensions: ['pdf'] }],
     })

@@ -15,20 +15,14 @@ const fontPath = join(
   'renderer',
   'public',
   'fonts',
-  'NotoSansHebrew-Regular.ttf',
+  'NotoSansHebrew-VF.ttf',
 )
 
 const fontBytes = await readFile(fontPath)
 const doc = await PDFDocument.create()
 doc.registerFontkit(fontkit)
 const page = doc.addPage([400, 400])
-let font
-try {
-  font = await doc.embedFont(fontBytes, { subset: true })
-} catch (e) {
-  console.error('subset failed, full embed:', e)
-  font = await doc.embedFont(fontBytes)
-}
+const font = await doc.embedFont(fontBytes, { subset: false })
 page.drawText('Hello שלום', {
   x: 40,
   y: 300,

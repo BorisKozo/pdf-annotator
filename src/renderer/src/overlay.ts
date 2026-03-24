@@ -17,16 +17,17 @@ export function drawAnnotationOverlay(
     const cy = canvasHeight - ann.y * scale
     const dir = getTextDirection(ann.text)
     const family = getFontEntry(ann.fontId).cssFamily
+    const rtl = dir === 'rtl'
+    // Avoid textAlign 'start' + variable font-weight: Chromium can mis-anchor bold RTL runs.
     ctx.save()
     ctx.direction = dir
-    ctx.textAlign = 'start'
-    ctx.font = `${ann.size * scale}px ${family}`
+    ctx.textAlign = rtl ? 'right' : 'left'
+    ctx.font = `${ann.bold === true ? 'bold ' : ''}${ann.size * scale}px ${family}`
     ctx.fillStyle = ann.hex
     ctx.fillText(ann.text, cx, cy)
     if (ann.id === selectedId) {
       const w = ctx.measureText(ann.text).width
       const h = ann.size * scale
-      const rtl = dir === 'rtl'
       const left = rtl ? cx - w : cx
       ctx.strokeStyle = 'rgba(233, 69, 96, 0.85)'
       ctx.lineWidth = 1.5
@@ -67,13 +68,13 @@ function hitTestAnnotation(
   const cy = canvasHeight - ann.y * scale
   const dir = getTextDirection(ann.text)
   const family = getFontEntry(ann.fontId).cssFamily
+  const rtl = dir === 'rtl'
   ctx.save()
   ctx.direction = dir
-  ctx.textAlign = 'start'
-  ctx.font = `${ann.size * scale}px ${family}`
+  ctx.textAlign = rtl ? 'right' : 'left'
+  ctx.font = `${ann.bold === true ? 'bold ' : ''}${ann.size * scale}px ${family}`
   const w = ctx.measureText(ann.text).width
   const h = ann.size * scale
-  const rtl = dir === 'rtl'
   const left = rtl ? cx - w : cx
   const right = left + w
   ctx.restore()

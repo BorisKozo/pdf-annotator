@@ -7,8 +7,9 @@
     <style>
       @font-face {
         font-family: 'Noto Sans Hebrew';
-        src: url('/fonts/NotoSansHebrew-Regular.ttf') format('truetype');
-        font-weight: normal;
+        src: url('/fonts/NotoSansHebrew-VF.ttf') format('truetype');
+        font-weight: 100 900;
+        font-stretch: 62.5% 100%;
         font-style: normal;
         font-display: swap;
       }
@@ -95,6 +96,13 @@
       .btn:disabled {
         opacity: 0.35;
         cursor: not-allowed;
+      }
+
+      .btn.toggle.active {
+        background: rgba(91, 140, 255, 0.18);
+        border-color: var(--accent);
+        color: var(--accent-hover);
+        font-weight: 700;
       }
 
       .sep {
@@ -341,11 +349,8 @@
         max-width: min(560px, 90vw);
         padding: 2px 6px;
         border: none;
-        border-bottom: 2px solid var(--accent);
-        background: rgba(18, 20, 26, 0.92);
-        color: var(--text);
         outline: none;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+        /* background, color, shadows set in JS for contrast with selected ink */
       }
 
       #zoom-stack {
@@ -415,6 +420,13 @@
     </style>
   </head>
   <body>
+    <input
+      type="file"
+      id="pdf-file-input"
+      accept=".pdf,application/pdf"
+      hidden
+      aria-hidden="true"
+    />
     <header id="toolbar">
       <span class="brand">Annotator</span>
       <button type="button" class="btn primary" id="btn-open">Open PDF</button>
@@ -440,13 +452,25 @@
             <input type="number" id="font-size-num" min="6" max="200" value="14" />
             <input type="range" id="font-size-range" min="6" max="72" value="14" />
           </div>
+          <div class="row">
+            <label for="btn-bold">Weight</label>
+            <button
+              type="button"
+              class="btn toggle"
+              id="btn-bold"
+              aria-pressed="false"
+              title="Bold (700)"
+            >
+              Bold
+            </button>
+          </div>
         </div>
         <div class="section">
           <div class="label">Color</div>
           <div class="palette" id="palette"></div>
           <div class="custom-color">
-            <input type="color" id="color-picker" value="#ffffff" />
-            <span id="hex-label" style="font-family: ui-monospace, monospace; font-size: 12px">#FFFFFF</span>
+            <input type="color" id="color-picker" value="#000000" />
+            <span id="hex-label" style="font-family: ui-monospace, monospace; font-size: 12px">#000000</span>
           </div>
         </div>
         <div id="annotations-panel">
