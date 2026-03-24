@@ -490,6 +490,47 @@ function bindStyleControls(): void {
   })
 }
 
+function isFormFieldTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable) return true
+  const t = target.tagName
+  return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT'
+}
+
+/** Nudge selected annotation in overlay/canvas pixels (Shift = 1px, else 10px). */
+function bindAnnotationArrowNudge(): void {
+  window.addEventListener('keydown', (e) => {
+    if (selectedId === null || !getPdfJsDocument()) return
+    if (isFormFieldTarget(e.target)) return
+    const step = e.shiftKey ? 1 : 10
+    let dx = 0
+    let dy = 0
+    switch (e.key) {
+      case 'ArrowLeft':
+        dx = -step
+        break
+      case 'ArrowRight':
+        dx = step
+        break
+      case 'ArrowUp':
+        dy = -step
+        break
+      case 'ArrowDown':
+        dy = step
+        break
+      default:
+        return
+    }
+    const ann = annotations.find((a) => a.id === selectedId)
+    if (!ann || ann.page !== currentPage) return
+    e.preventDefault()
+    ann.x += dx / scale
+    ann.y -= dy / scale
+    void refreshPage()
+    renderAnnotationsList()
+  })
+}
+
 function bindCanvas(): void {
   const overlay = overlayCanvasEl()
   overlay.addEventListener('click', (e) => {
@@ -587,6 +628,7 @@ bindToolbar()
 bindPdfFileInput()
 bindStyleControls()
 bindCanvas()
+bindAnnotationArrowNudge()
 bindZoom()
 bindDragDrop()
 updatePageUi()
