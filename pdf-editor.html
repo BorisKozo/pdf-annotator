@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF Text Editor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --panel: #0f3460;
+    --accent: #e94560;
+    --accent2: #533483;
+    --text: #eaeaea;
+    --text-muted: #8892a4;
+    --border: rgba(255,255,255,0.08);
+    --toolbar-h: 56px;
+    --sidebar-w: 280px;
+    font-family: 'Courier New', monospace;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* TOOLBAR */
+  #toolbar {
+    height: var(--toolbar-h);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 0 16px;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 100;
+  }
+
+  .toolbar-brand {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    margin-right: 24px;
+    text-transform: uppercase;
+  }
+
+  .toolbar-sep {
+    width: 1px;
+    height: 28px;
+    background: var(--border);
+    margin: 0 12px;
+  }
+
+  .tb-btn {
+    height: 34px;
+    padding: 0 14px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tb-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); border-color: var(--border); }
+  .tb-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tb-btn.primary:hover { background: #c73850; }
+  .tb-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  #page-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+  }
+  #page-info {
+    font-size: 12px;
+    color: var(--text-muted);
+    min-width: 80px;
+    text-align: center;
+  }
+
+  /* LAYOUT */
+  #app-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* SIDEBAR */
+  #sidebar {
+    width: var(--sidebar-w);
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow-y: auto;
+  }
+
+  .sidebar-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-label {
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+
+  .prop-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .prop-row label {
+    font-size: 12px;
+    color: var(--text-muted);
+    width: 44px;
+    flex-shrink: 0;
+  }
+
+  .prop-input {
+    flex: 1;
+    height: 30px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 0 8px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .prop-input:focus { border-color: var(--accent); }
+  select.prop-input { cursor: pointer; }
+
+  #font-size-input {
+    width: 60px;
+    flex: none;
+    text-align: center;
+  }
+
+  .color-swatch-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .color-swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.1s;
+  }
+  .color-swatch:hover { transform: scale(1.15); }
+  .color-swatch.selected { border-color: var(--text); }
+
+  #custom-color-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  #custom-color {
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    background: none;
+    padding: 0;
+  }
+
+  /* ANNOTATIONS LIST */
+  #annotations-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .ann-item {
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    border: 1px solid transparent;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.1s;
+  }
+  .ann-item:hover { background: rgba(255,255,255,0.05); border-color: var(--border); }
+  .ann-item.selected { background: rgba(233,69,96,0.15); border-color: var(--accent); }
+  .ann-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .ann-text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+  }
+  .ann-del {
+    font-size: 14px;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 0.1s;
+  }
+  .ann-item:hover .ann-del { opacity: 1; }
+  .ann-del:hover { color: var(--accent); }
+
+  /* CANVAS AREA */
+  #canvas-area {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 32px;
+    background: var(--bg);
+    position: relative;
+  }
+
+  #canvas-wrapper {
+    position: relative;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    cursor: crosshair;
+    flex-shrink: 0;
+  }
+
+  #pdf-canvas {
+    display: block;
+  }
+
+  #overlay-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    cursor: crosshair;
+  }
+
+  /* INLINE TEXT INPUT */
+  #inline-input {
+    position: absolute;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid var(--accent);
+    outline: none;
+    color: inherit;
+    font-family: inherit;
+    min-width: 20px;
+    max-width: 600px;
+    padding: 0 2px;
+    z-index: 200;
+    display: none;
+    caret-color: var(--accent);
+  }
+
+  /* DROP ZONE */
+  #drop-zone {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    pointer-events: none;
+  }
+  #drop-zone.hidden { display: none; }
+  .drop-icon {
+    width: 64px;
+    height: 64px;
+    border: 2px dashed var(--accent);
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+  }
+  .drop-title { font-size: 18px; font-weight: 700; letter-spacing: 0.05em; color: var(--text); }
+  .drop-sub { font-size: 13px; color: var(--text-muted); }
+
+  #file-input { display: none; }
+
+  /* DROP HOVER */
+  body.drag-over #canvas-area {
+    outline: 2px dashed var(--accent);
+    outline-offset: -8px;
+  }
+
+  /* ZOOM */
+  #zoom-controls {
+    position: absolute;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 50;
+  }
+  .zoom-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s;
+  }
+  .zoom-btn:hover { background: var(--panel); }
+
+  #zoom-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: center;
+    margin-top: 2px;
+  }
+
+  /* CURSOR MODE indicator */
+  #mode-indicator {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 16px;
+    font-size: 12px;
+    color: var(--text-muted);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: 50;
+  }
+  #mode-indicator.visible { opacity: 1; }
+
+  /* STATUS BAR */
+  #status-bar {
+    height: 24px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .status-item {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .status-item span { color: var(--text); }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+</style>
+</head>
+<body>
+
+<!-- TOOLBAR -->
+<div id="toolbar">
+  <span class="toolbar-brand">PDF·INK</span>
+  <div class="toolbar-sep"></div>
+  <button class="tb-btn" id="open-btn" onclick="document.getElementById('file-input').click()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+    Open PDF
+  </button>
+  <button class="tb-btn primary" id="save-btn" disabled onclick="savePDF()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+    Save PDF
+  </button>
+  <div class="toolbar-sep"></div>
+  <button class="tb-btn" id="undo-btn" disabled onclick="undoAnnotation()" title="Undo last annotation">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4"/></svg>
+    Undo
+  </button>
+  <button class="tb-btn" id="clear-btn" disabled onclick="clearAnnotations()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+    Clear All
+  </button>
+  <div id="page-nav">
+    <button class="tb-btn" id="prev-btn" disabled onclick="changePage(-1)">&#8592;</button>
+    <span id="page-info">—</span>
+    <button class="tb-btn" id="next-btn" disabled onclick="changePage(1)">&#8594;</button>
+  </div>
+</div>
+
+<!-- BODY -->
+<div id="app-body">
+
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Font</div>
+      <div class="prop-row">
+        <label>Face</label>
+        <select class="prop-input" id="font-family" onchange="updateCurrentStyle()">
+          <option value="Helvetica">Helvetica</option>
+          <option value="Times-Roman">Times Roman</option>
+          <option value="Courier">Courier</option>
+          <option value="Helvetica-Bold">Helvetica Bold</option>
+          <option value="Times-Bold">Times Bold</option>
+        </select>
+      </div>
+      <div class="prop-row">
+        <label>Size</label>
+        <input type="number" class="prop-input" id="font-size-input" value="14" min="6" max="200" onchange="updateCurrentStyle()">
+        <input type="range" class="prop-input" id="font-size-slider" style="flex:1" min="6" max="72" value="14" oninput="document.getElementById('font-size-input').value=this.value; updateCurrentStyle()">
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Color</div>
+      <div class="color-swatch-row" id="color-swatches"></div>
+      <div id="custom-color-row">
+        <input type="color" id="custom-color" value="#ffffff" oninput="selectColor(this.value)">
+        <span style="font-size:12px;color:var(--text-muted)">Custom</span>
+        <span id="hex-display" style="font-size:12px;color:var(--text);font-family:monospace">#FFFFFF</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section" style="border-bottom:none; flex:1; display:flex; flex-direction:column; min-height:0;">
+      <div class="sidebar-label">Annotations (<span id="ann-count">0</span>)</div>
+      <div id="annotations-list"></div>
+    </div>
+  </div>
+
+  <!-- CANVAS AREA -->
+  <div id="canvas-area" id="drop-area">
+    <div id="drop-zone">
+      <div class="drop-icon">📄</div>
+      <div class="drop-title">Drop a PDF here</div>
+      <div class="drop-sub">or click <strong style="color:var(--accent);cursor:pointer" onclick="document.getElementById('file-input').click()">Open PDF</strong> in the toolbar</div>
+    </div>
+    <div id="canvas-wrapper" style="display:none">
+      <canvas id="pdf-canvas"></canvas>
+      <canvas id="overlay-canvas"></canvas>
+      <input type="text" id="inline-input" placeholder="Type here…" />
+    </div>
+    <div id="zoom-controls">
+      <button class="zoom-btn" onclick="setZoom(scale + 0.15)" title="Zoom in">+</button>
+      <button class="zoom-btn" onclick="setZoom(scale - 0.15)" title="Zoom out">−</button>
+      <button class="zoom-btn" onclick="setZoom(1)" title="Reset zoom" style="font-size:11px">1:1</button>
+      <div id="zoom-label">100%</div>
+    </div>
+    <div id="mode-indicator">Click anywhere to place text</div>
+  </div>
+</div>
+
+<!-- STATUS BAR -->
+<div id="status-bar">
+  <span class="status-item">File: <span id="status-file">none</span></span>
+  <span class="status-item">Page: <span id="status-page">—</span></span>
+  <span class="status-item">Zoom: <span id="status-zoom">100%</span></span>
+  <span class="status-item">Annotations: <span id="status-ann">0</span></span>
+  <span class="status-item" id="status-coords" style="margin-left:auto">x:— y:—</span>
+</div>
+
+<input type="file" id="file-input" accept=".pdf" onchange="loadPDFFile(this.files[0])">
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+let pdfDoc = null;       // pdf.js document
+let pdfLibDoc = null;    // pdf-lib document
+let pdfBytes = null;     // original bytes
+let currentPage = 1;
+let totalPages = 0;
+let scale = 1.0;
+let pageViewport = null;
+let annotations = [];    // { id, page, x, y, text, font, size, r, g, b, hexColor }
+let selectedAnn = null;
+let pendingClick = null; // { x, y } in PDF coords
+let currentColor = { r: 1, g: 1, b: 1, hex: '#ffffff' };
+let currentFont = 'Helvetica';
+let currentSize = 14;
+let fileName = '';
+
+// ─── COLOR PALETTE ────────────────────────────────────────────────────────────
+const PALETTE = [
+  '#ffffff','#000000','#e94560','#4fc3f7','#aed581',
+  '#ffb74d','#ce93d8','#80cbc4','#f48fb1','#bcaaa4',
+];
+
+function initPalette() {
+  const row = document.getElementById('color-swatches');
+  PALETTE.forEach(hex => {
+    const sw = document.createElement('div');
+    sw.className = 'color-swatch' + (hex === currentColor.hex ? ' selected' : '');
+    sw.style.background = hex;
+    sw.style.border = hex === '#ffffff' ? '2px solid rgba(255,255,255,0.3)' : '2px solid transparent';
+    sw.onclick = () => selectColor(hex);
+    sw.dataset.hex = hex;
+    row.appendChild(sw);
+  });
+}
+
+function selectColor(hex) {
+  const r = parseInt(hex.slice(1,3),16)/255;
+  const g = parseInt(hex.slice(3,5),16)/255;
+  const b = parseInt(hex.slice(5,7),16)/255;
+  currentColor = { r, g, b, hex };
+  document.getElementById('custom-color').value = hex;
+  document.getElementById('hex-display').textContent = hex.toUpperCase();
+  document.querySelectorAll('.color-swatch').forEach(sw => {
+    sw.classList.toggle('selected', sw.dataset.hex === hex);
+  });
+  if (selectedAnn !== null) {
+    annotations[selectedAnn].r = r;
+    annotations[selectedAnn].g = g;
+    annotations[selectedAnn].b = b;
+    annotations[selectedAnn].hexColor = hex;
+    renderOverlay();
+    refreshAnnotationsList();
+  }
+}
+
+// ─── STYLE UPDATE ─────────────────────────────────────────────────────────────
+function updateCurrentStyle() {
+  currentFont = document.getElementById('font-family').value;
+  currentSize = parseInt(document.getElementById('font-size-input').value) || 14;
+  document.getElementById('font-size-slider').value = Math.min(72, currentSize);
+  if (selectedAnn !== null) {
+    annotations[selectedAnn].font = currentFont;
+    annotations[selectedAnn].size = currentSize;
+    renderOverlay();
+    refreshAnnotationsList();
+  }
+}
+
+// ─── FILE LOADING ─────────────────────────────────────────────────────────────
+function loadPDFFile(file) {
+  if (!file) return;
+  fileName = file.name;
+  document.getElementById('status-file').textContent = fileName;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    pdfBytes = new Uint8Array(e.target.result);
+    annotations = [];
+    selectedAnn = null;
+    currentPage = 1;
+    await loadPDFJS(pdfBytes);
+    await loadPDFLib(pdfBytes);
+    document.getElementById('drop-zone').classList.add('hidden');
+    document.getElementById('canvas-wrapper').style.display = 'block';
+    document.getElementById('save-btn').disabled = false;
+    document.getElementById('clear-btn').disabled = false;
+    showModeHint();
+    refreshAnnotationsList();
+    updateButtons();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function loadPDFJS(bytes) {
+  const copy = new Uint8Array(bytes);
+  pdfDoc = await pdfjsLib.getDocument({ data: copy }).promise;
+  totalPages = pdfDoc.numPages;
+  document.getElementById('page-info').textContent = `${currentPage} / ${totalPages}`;
+  document.getElementById('status-page').textContent = `${currentPage} / ${totalPages}`;
+  document.getElementById('prev-btn').disabled = currentPage <= 1;
+  document.getElementById('next-btn').disabled = currentPage >= totalPages;
+  await renderPage(currentPage);
+}
+
+async function loadPDFLib(bytes) {
+  pdfLibDoc = await PDFLib.PDFDocument.load(bytes);
+}
+
+async function renderPage(num) {
+  const page = await pdfDoc.getPage(num);
+  pageViewport = page.getViewport({ scale });
+  const pdfCanvas = document.getElementById('pdf-canvas');
+  const overlayCanvas = document.getElementById('overlay-canvas');
+  const ctx = pdfCanvas.getContext('2d');
+  pdfCanvas.width = pageViewport.width;
+  pdfCanvas.height = pageViewport.height;
+  overlayCanvas.width = pageViewport.width;
+  overlayCanvas.height = pageViewport.height;
+  await page.render({ canvasContext: ctx, viewport: pageViewport }).promise;
+  renderOverlay();
+}
+
+// ─── OVERLAY RENDERING ────────────────────────────────────────────────────────
+function renderOverlay() {
+  const canvas = document.getElementById('overlay-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const pageAnns = annotations.filter(a => a.page === currentPage);
+  pageAnns.forEach((ann, localIdx) => {
+    const globalIdx = annotations.indexOf(ann);
+    const cx = ann.x * scale;
+    const cy = canvas.height - ann.y * scale;
+    const fontStr = ann.font.includes('Times') ? 'serif' : ann.font.includes('Courier') ? 'monospace' : 'sans-serif';
+    const weight = ann.font.includes('Bold') ? 'bold' : 'normal';
+    ctx.font = `${weight} ${ann.size * scale}px ${fontStr}`;
+    ctx.fillStyle = ann.hexColor;
+    ctx.fillText(ann.text, cx, cy);
+    if (globalIdx === selectedAnn) {
+      const m = ctx.measureText(ann.text);
+      const h = ann.size * scale;
+      ctx.strokeStyle = 'rgba(233,69,96,0.8)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(cx - 2, cy - h, m.width + 4, h + 4);
+      ctx.setLineDash([]);
+    }
+  });
+}
+
+// ─── CLICK TO PLACE ───────────────────────────────────────────────────────────
+document.getElementById('overlay-canvas').addEventListener('click', (e) => {
+  if (!pdfDoc) return;
+  const canvas = document.getElementById('overlay-canvas');
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left;
+  const py = e.clientY - rect.top;
+
+  // Check if clicking an existing annotation
+  const pageAnns = annotations.filter(a => a.page === currentPage);
+  for (let i = pageAnns.length - 1; i >= 0; i--) {
+    const ann = pageAnns[i];
+    const globalIdx = annotations.indexOf(ann);
+    const cx = ann.x * scale;
+    const cy = canvas.height - ann.y * scale;
+    const approxW = ann.text.length * ann.size * scale * 0.6;
+    const approxH = ann.size * scale;
+    if (px >= cx - 4 && px <= cx + approxW + 4 && py >= cy - approxH - 4 && py <= cy + 4) {
+      selectAnnotation(globalIdx);
+      return;
+    }
+  }
+
+  // New annotation: deselect first, then show inline input
+  selectedAnn = null;
+  renderOverlay();
+  const pdfX = px / scale;
+  const pdfY = (canvas.height - py) / scale;
+  showInlineInput(px, py, pdfX, pdfY);
+});
+
+document.getElementById('overlay-canvas').addEventListener('mousemove', (e) => {
+  if (!pdfDoc) return;
+  const canvas = document.getElementById('overlay-canvas');
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left;
+  const py = e.clientY - rect.top;
+  const pdfX = Math.round(px / scale);
+  const pdfY = Math.round((canvas.height - py) / scale);
+  document.getElementById('status-coords').textContent = `x:${pdfX} y:${pdfY}`;
+});
+
+// ─── INLINE INPUT ─────────────────────────────────────────────────────────────
+function showInlineInput(screenX, screenY, pdfX, pdfY) {
+  const inp = document.getElementById('inline-input');
+  const size = currentSize;
+  const fontStr = currentFont.includes('Times') ? 'serif' : currentFont.includes('Courier') ? 'monospace' : 'sans-serif';
+  const weight = currentFont.includes('Bold') ? 'bold' : 'normal';
+  inp.style.left = screenX + 'px';
+  inp.style.top = (screenY - size * scale) + 'px';
+  inp.style.fontSize = (size * scale) + 'px';
+  inp.style.fontFamily = fontStr;
+  inp.style.fontWeight = weight;
+  inp.style.color = currentColor.hex;
+  inp.style.display = 'block';
+  inp.value = '';
+  inp.focus();
+
+  inp.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === 'Escape') {
+      const text = inp.value.trim();
+      if (e.key === 'Enter' && text) {
+        commitAnnotation(pdfX, pdfY, text);
+      }
+      inp.style.display = 'none';
+      inp.value = '';
+    }
+  };
+
+  inp.onblur = () => {
+    const text = inp.value.trim();
+    if (text) commitAnnotation(pdfX, pdfY, text);
+    inp.style.display = 'none';
+    inp.value = '';
+  };
+}
+
+function commitAnnotation(pdfX, pdfY, text) {
+  const ann = {
+    id: Date.now(),
+    page: currentPage,
+    x: pdfX,
+    y: pdfY,
+    text,
+    font: currentFont,
+    size: currentSize,
+    r: currentColor.r,
+    g: currentColor.g,
+    b: currentColor.b,
+    hexColor: currentColor.hex,
+  };
+  annotations.push(ann);
+  selectedAnn = annotations.length - 1;
+  renderOverlay();
+  refreshAnnotationsList();
+  updateButtons();
+  document.getElementById('undo-btn').disabled = false;
+}
+
+// ─── SELECT ANNOTATION ────────────────────────────────────────────────────────
+function selectAnnotation(idx) {
+  selectedAnn = idx;
+  const ann = annotations[idx];
+  document.getElementById('font-family').value = ann.font;
+  document.getElementById('font-size-input').value = ann.size;
+  document.getElementById('font-size-slider').value = Math.min(72, ann.size);
+  selectColor(ann.hexColor);
+  renderOverlay();
+  refreshAnnotationsList();
+}
+
+// ─── ANNOTATIONS LIST ─────────────────────────────────────────────────────────
+function refreshAnnotationsList() {
+  const list = document.getElementById('annotations-list');
+  const count = annotations.length;
+  document.getElementById('ann-count').textContent = count;
+  document.getElementById('status-ann').textContent = count;
+  list.innerHTML = '';
+  if (count === 0) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px;text-align:center">No annotations yet</div>';
+    return;
+  }
+  annotations.forEach((ann, i) => {
+    const item = document.createElement('div');
+    item.className = 'ann-item' + (i === selectedAnn ? ' selected' : '');
+    item.innerHTML = `
+      <div class="ann-dot" style="background:${ann.hexColor};border:1px solid rgba(255,255,255,0.2)"></div>
+      <div class="ann-text" title="${ann.text}">p${ann.page}: ${ann.text}</div>
+      <button class="ann-del" title="Delete" onclick="deleteAnnotation(${i},event)">✕</button>
+    `;
+    item.onclick = () => { if (ann.page !== currentPage) changePage(ann.page - currentPage); selectAnnotation(i); };
+    list.appendChild(item);
+  });
+}
+
+function deleteAnnotation(idx, e) {
+  e.stopPropagation();
+  annotations.splice(idx, 1);
+  if (selectedAnn === idx) selectedAnn = null;
+  else if (selectedAnn > idx) selectedAnn--;
+  renderOverlay();
+  refreshAnnotationsList();
+  updateButtons();
+}
+
+function undoAnnotation() {
+  if (annotations.length === 0) return;
+  annotations.pop();
+  if (selectedAnn >= annotations.length) selectedAnn = null;
+  renderOverlay();
+  refreshAnnotationsList();
+  updateButtons();
+}
+
+function clearAnnotations() {
+  if (annotations.length === 0) return;
+  if (!confirm('Clear all annotations?')) return;
+  annotations = [];
+  selectedAnn = null;
+  renderOverlay();
+  refreshAnnotationsList();
+  updateButtons();
+}
+
+function updateButtons() {
+  document.getElementById('undo-btn').disabled = annotations.length === 0;
+  document.getElementById('clear-btn').disabled = annotations.length === 0;
+}
+
+// ─── PAGE NAVIGATION ──────────────────────────────────────────────────────────
+async function changePage(delta) {
+  if (!pdfDoc) return;
+  const newPage = currentPage + delta;
+  if (newPage < 1 || newPage > totalPages) return;
+  currentPage = newPage;
+  selectedAnn = null;
+  await renderPage(currentPage);
+  document.getElementById('page-info').textContent = `${currentPage} / ${totalPages}`;
+  document.getElementById('status-page').textContent = `${currentPage} / ${totalPages}`;
+  document.getElementById('prev-btn').disabled = currentPage <= 1;
+  document.getElementById('next-btn').disabled = currentPage >= totalPages;
+  refreshAnnotationsList();
+}
+
+// ─── ZOOM ────────────────────────────────────────────────────────────────────
+function setZoom(newScale) {
+  scale = Math.max(0.3, Math.min(4.0, newScale));
+  document.getElementById('zoom-label').textContent = Math.round(scale * 100) + '%';
+  document.getElementById('status-zoom').textContent = Math.round(scale * 100) + '%';
+  if (pdfDoc) renderPage(currentPage);
+}
+
+// ─── SAVE PDF ─────────────────────────────────────────────────────────────────
+async function savePDF() {
+  if (!pdfLibDoc || annotations.length === 0) {
+    // Save original if no annotations
+    if (pdfBytes) downloadBytes(pdfBytes, fileName || 'document.pdf');
+    return;
+  }
+  const fontMap = {};
+
+  const embedFont = async (fontName) => {
+    if (fontMap[fontName]) return fontMap[fontName];
+    const SF = PDFLib.StandardFonts;
+    const mapping = {
+      'Helvetica': SF.Helvetica,
+      'Times-Roman': SF.TimesRoman,
+      'Courier': SF.Courier,
+      'Helvetica-Bold': SF.HelveticaBold,
+      'Times-Bold': SF.TimesBold,
+    };
+    const f = await pdfLibDoc.embedFont(mapping[fontName] || SF.Helvetica);
+    fontMap[fontName] = f;
+    return f;
+  };
+
+  for (const ann of annotations) {
+    const page = pdfLibDoc.getPage(ann.page - 1);
+    const { height } = page.getSize();
+    const font = await embedFont(ann.font);
+    page.drawText(ann.text, {
+      x: ann.x,
+      y: ann.y,
+      size: ann.size,
+      font,
+      color: PDFLib.rgb(ann.r, ann.g, ann.b),
+    });
+  }
+
+  const outBytes = await pdfLibDoc.save();
+  downloadBytes(outBytes, (fileName || 'document').replace('.pdf','') + '_annotated.pdf');
+
+  // Reload pdfLibDoc fresh for further edits
+  pdfLibDoc = await PDFLib.PDFDocument.load(pdfBytes);
+}
+
+function downloadBytes(bytes, name) {
+  const blob = new Blob([bytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── DRAG & DROP ─────────────────────────────────────────────────────────────
+const body = document.body;
+body.addEventListener('dragover', (e) => { e.preventDefault(); body.classList.add('drag-over'); });
+body.addEventListener('dragleave', () => body.classList.remove('drag-over'));
+body.addEventListener('drop', (e) => {
+  e.preventDefault();
+  body.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type === 'application/pdf') loadPDFFile(file);
+});
+
+// ─── MODE HINT ────────────────────────────────────────────────────────────────
+function showModeHint() {
+  const ind = document.getElementById('mode-indicator');
+  ind.classList.add('visible');
+  setTimeout(() => ind.classList.remove('visible'), 3000);
+}
+
+// ─── KEYBOARD SHORTCUTS ───────────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (document.getElementById('inline-input') === document.activeElement) return;
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (selectedAnn !== null) { deleteAnnotation(selectedAnn, { stopPropagation: ()=>{} }); }
+  }
+  if (e.key === 'ArrowLeft' && pdfDoc) changePage(-1);
+  if (e.key === 'ArrowRight' && pdfDoc) changePage(1);
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undoAnnotation(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); savePDF(); }
+  if (e.key === '+' || e.key === '=') setZoom(scale + 0.1);
+  if (e.key === '-') setZoom(scale - 0.1);
+});
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+initPalette();
+selectColor('#ffffff');
+</script>
+</body>
+</html>
