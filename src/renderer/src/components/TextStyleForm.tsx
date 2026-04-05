@@ -12,7 +12,7 @@ export function TextStyleForm() {
 
   return (
     <div
-      className={`border-b border-[var(--border)] p-3.5 ${hidden ? 'hidden' : ''}`}
+      className={`border-b border-[var(--border)] px-4 py-3.5 ${hidden ? 'hidden' : ''}`}
       id="section-text-style"
     >
       <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
@@ -68,7 +68,7 @@ export function TextStyleForm() {
           title="Bold (700)"
           aria-pressed={state.currentBold}
           className={
-            'inline-flex h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border px-3 text-xs hover:border-[rgba(255,255,255,0.15)] ' +
+            'inline-flex h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border px-4 text-xs hover:border-[rgba(255,255,255,0.15)] ' +
             (state.currentBold
               ? 'border-[var(--accent)] bg-[rgba(91,140,255,0.18)] font-bold text-[var(--accent-hover)]'
               : 'border-[var(--border)] bg-[var(--panel)] text-[var(--text)]')

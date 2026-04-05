@@ -6,7 +6,7 @@ export function ColorPalette() {
   const hex = state.currentColor.hex
 
   return (
-    <div className="border-b border-[var(--border)] p-3.5">
+    <div className="border-b border-[var(--border)] px-4 py-3.5">
       <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--muted)]">Color</div>
       <div className="flex flex-wrap gap-1.5" id="palette">
         {PALETTE.map((c) => {

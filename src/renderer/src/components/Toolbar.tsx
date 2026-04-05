@@ -8,7 +8,7 @@ export function Toolbar() {
 
   return (
     <header
-      className="flex h-[var(--toolbar-h)] shrink-0 items-center gap-2.5 border-b border-[var(--border)] bg-[var(--surface)] px-3.5"
+      className="flex h-[var(--toolbar-h)] shrink-0 items-center gap-2.5 border-b border-[var(--border)] bg-[var(--surface)] px-3 sm:px-4"
       id="toolbar"
     >
       <span className="mr-3 text-sm font-bold uppercase tracking-widest text-[var(--accent)]">
@@ -16,7 +16,7 @@ export function Toolbar() {
       </span>
       <button
         type="button"
-        className="btn-primary inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 text-xs font-semibold text-[#0b1020] hover:border-[var(--accent-hover)] hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-35"
+        className="btn-primary inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--accent)] bg-[var(--accent)] px-4 text-xs font-semibold text-[#0b1020] hover:border-[var(--accent-hover)] hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-35"
         id="btn-open"
         onClick={() => void openPdfFlow()}
       >
@@ -24,7 +24,7 @@ export function Toolbar() {
       </button>
       <button
         type="button"
-        className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
+        className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-4 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
         id="btn-save"
         disabled={pdfSourceBytes === null}
         onClick={() => void savePdfFlow()}
@@ -32,11 +32,23 @@ export function Toolbar() {
         Save PDF
       </button>
       <span className="mx-1 h-[22px] w-px bg-[var(--border)]" />
-      <div className="ml-auto flex items-center gap-2" id="page-nav">
+      <div
+        className="ml-auto flex items-center gap-2"
+        id="page-nav"
+        title={
+          totalPages <= 0
+            ? 'Open a PDF to use page navigation'
+            : totalPages === 1
+              ? 'This document has only one page'
+              : `Page ${currentPage} of ${totalPages}`
+        }
+      >
         <button
           type="button"
-          className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
+          className="inline-flex h-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
           id="btn-prev"
+          aria-label="Previous page"
+          title="Previous page"
           disabled={navDisabled || currentPage <= 1}
           onClick={() => void changePage(-1)}
         >
@@ -47,8 +59,10 @@ export function Toolbar() {
         </span>
         <button
           type="button"
-          className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
+          className="inline-flex h-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
           id="btn-next"
+          aria-label="Next page"
+          title="Next page"
           disabled={navDisabled || currentPage >= totalPages}
           onClick={() => void changePage(1)}
         >

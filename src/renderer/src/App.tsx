@@ -20,7 +20,7 @@ function GlobalBindings() {
 
 export function App() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col px-4 sm:px-5">
       <GlobalBindings />
       <Toolbar />
       <div className="flex min-h-0 flex-1" id="app-body">

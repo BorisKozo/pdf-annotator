@@ -9,7 +9,7 @@ export function AnnotationsPanel() {
   const sorted = annotationsSortedLikeList(annotations)
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col p-2.5" id="annotations-panel">
+    <div className="flex min-h-0 flex-1 flex-col px-4 py-2.5" id="annotations-panel">
       <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
         Annotations (<span id="ann-count">{annotations.length}</span>)
       </div>

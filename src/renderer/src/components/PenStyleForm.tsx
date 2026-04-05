@@ -11,7 +11,7 @@ export function PenStyleForm() {
 
   return (
     <div
-      className={`border-b border-[var(--border)] p-3.5 ${hidden ? 'hidden' : ''}`}
+      className={`border-b border-[var(--border)] px-4 py-3.5 ${hidden ? 'hidden' : ''}`}
       id="section-pen-style"
     >
       <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--muted)]">Pen</div>
