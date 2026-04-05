@@ -22,7 +22,8 @@ function pdfPointToCanvas(
   return { cx: p.x * scale, cy: canvasHeight - p.y * scale }
 }
 
-function penBoundsPdf(ann: Extract<Annotation, { kind: 'pen' }>): {
+/** Padded bounds of pen strokes in PDF space; dashed selection uses this rect. */
+export function penBoundsPdf(ann: Extract<Annotation, { kind: 'pen' }>): {
   minX: number
   minY: number
   maxX: number
@@ -158,6 +159,30 @@ export function drawAnnotationOverlay(
       )
     }
   }
+}
+
+/** Top-left of the text selection box in PDF space (y increases upward). */
+export function textAnnotationTopLeftPdf(
+  ctx: CanvasRenderingContext2D,
+  canvasHeight: number,
+  scale: number,
+  ann: Extract<Annotation, { kind: 'text' }>,
+): { x: number; y: number } {
+  const cx = ann.x * scale
+  const cy = canvasHeight - ann.y * scale
+  const dir = getTextDirection(ann.text)
+  const family = getFontEntry(ann.fontId).cssFamily
+  const rtl = dir === 'rtl'
+  ctx.save()
+  ctx.direction = dir
+  ctx.textAlign = rtl ? 'right' : 'left'
+  ctx.font = `${ann.bold === true ? 'bold ' : ''}${ann.size * scale}px ${family}`
+  const w = ctx.measureText(ann.text).width
+  const h = ann.size * scale
+  const left = rtl ? cx - w : cx
+  ctx.restore()
+  const topCanvas = cy - h
+  return { x: left / scale, y: (canvasHeight - topCanvas) / scale }
 }
 
 export function findAnnotationAtCanvasPoint(

@@ -1,6 +1,12 @@
 import { FONT_CATALOG } from './fonts'
 import { openPdfFromBuffer, renderPdfPage, getPdfJsDocument } from './pdfSession'
-import { drawAnnotationOverlay, findAnnotationAtCanvasPoint, type PenDrawPreview } from './overlay'
+import {
+  drawAnnotationOverlay,
+  findAnnotationAtCanvasPoint,
+  penBoundsPdf,
+  textAnnotationTopLeftPdf,
+  type PenDrawPreview,
+} from './overlay'
 import { buildAnnotatedPdfBytes } from './exportPdf'
 import type { Annotation, PdfPoint } from './types'
 import { isPenAnnotation, isTextAnnotation } from './types'
@@ -61,6 +67,11 @@ type ShiftPenCompose = {
   hex: string
 }
 let shiftPenCompose: ShiftPenCompose | null = null
+
+/** In-app clipboard: deep copy of last copied annotation (id ignored on paste). */
+let copiedAnnotationTemplate: Annotation | null = null
+/** Last pointer position over the overlay in PDF coordinates (for paste placement). */
+let lastPointerPdf: PdfPoint | null = null
 
 const MIN_PEN_SEGMENT_PDF = 0.2
 
@@ -328,6 +339,14 @@ function initPalette(): void {
   }
 }
 
+/** Same order as the sidebar list: page ascending, then id ascending. */
+function annotationsSortedLikeList(list: Annotation[] = annotations): Annotation[] {
+  return [...list].sort((a, b) => {
+    if (a.page !== b.page) return a.page - b.page
+    return a.id - b.id
+  })
+}
+
 function renderAnnotationsList(): void {
   const list = $('annotations-list')
   const countEl = $('ann-count')
@@ -341,10 +360,7 @@ function renderAnnotationsList(): void {
     list.appendChild(empty)
     return
   }
-  const sorted = [...annotations].sort((a, b) => {
-    if (a.page !== b.page) return a.page - b.page
-    return a.id - b.id
-  })
+  const sorted = annotationsSortedLikeList()
   for (const ann of sorted) {
     const row = document.createElement('div')
     row.className = 'ann-row' + (ann.id === selectedId ? ' active' : '')
@@ -414,10 +430,30 @@ async function selectAnnotationById(id: number): Promise<void> {
 }
 
 function deleteAnnotationById(id: number): void {
+  const sortedBefore = annotationsSortedLikeList()
+  const idx = sortedBefore.findIndex((a) => a.id === id)
+  if (idx === -1) return
+
+  const wasSelected = selectedId === id
+  let selectAfter: number | null = null
+  if (wasSelected) {
+    if (idx > 0) selectAfter = sortedBefore[idx - 1]!.id
+  }
+
   annotations = annotations.filter((a) => a.id !== id)
-  if (selectedId === id) selectedId = null
+  if (wasSelected) {
+    selectedId = null
+    if (selectAfter === null && annotations.length > 0) {
+      selectAfter = annotationsSortedLikeList()[0]!.id
+    }
+  }
+
   void refreshPage()
   renderAnnotationsList()
+
+  if (wasSelected && selectAfter !== null) {
+    void selectAnnotationById(selectAfter)
+  }
 }
 
 function showInlineInput(clientX: number, clientY: number, pdfX: number, pdfY: number): void {
@@ -672,6 +708,142 @@ function isFormFieldTarget(target: EventTarget | null): boolean {
   return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT'
 }
 
+function cloneAnnotationForClipboard(ann: Annotation): Annotation {
+  if (isTextAnnotation(ann)) {
+    return {
+      kind: 'text',
+      id: 0,
+      page: ann.page,
+      x: ann.x,
+      y: ann.y,
+      text: ann.text,
+      fontId: ann.fontId,
+      size: ann.size,
+      bold: ann.bold,
+      r: ann.r,
+      g: ann.g,
+      b: ann.b,
+      hex: ann.hex,
+    }
+  }
+  return {
+    kind: 'pen',
+    id: 0,
+    page: ann.page,
+    segments: ann.segments.map((seg) => seg.map((p) => ({ x: p.x, y: p.y }))),
+    strokeWidth: ann.strokeWidth,
+    r: ann.r,
+    g: ann.g,
+    b: ann.b,
+    hex: ann.hex,
+  }
+}
+
+function fallbackPastePointPdf(): PdfPoint {
+  const overlay = overlayCanvasEl()
+  return {
+    x: overlay.width / 2 / scale,
+    y: overlay.height / 2 / scale,
+  }
+}
+
+/** Places a clone so its visual top-left (PDF space, y up) matches `at`. */
+function annotationPastedAtTopLeft(template: Annotation, page: number, at: PdfPoint): Annotation {
+  const overlay = overlayCanvasEl()
+  const ctx = overlay.getContext('2d')
+  if (isTextAnnotation(template)) {
+    if (!ctx) {
+      return {
+        ...cloneAnnotationForClipboard(template),
+        id: 0,
+        page,
+        x: at.x,
+        y: at.y - template.size,
+      }
+    }
+    const tl = textAnnotationTopLeftPdf(ctx, overlay.height, scale, template)
+    return {
+      ...cloneAnnotationForClipboard(template),
+      id: 0,
+      page,
+      x: at.x + (template.x - tl.x),
+      y: at.y + (template.y - tl.y),
+    }
+  }
+  const b = penBoundsPdf(template)
+  if (!b) {
+    return {
+      ...cloneAnnotationForClipboard(template),
+      id: 0,
+      page,
+    }
+  }
+  const dX = at.x - b.minX
+  const dY = at.y - b.maxY
+  const cloned = cloneAnnotationForClipboard(template) as Extract<Annotation, { kind: 'pen' }>
+  return {
+    ...cloned,
+    id: 0,
+    page,
+    segments: cloned.segments.map((seg) => seg.map((p) => ({ x: p.x + dX, y: p.y + dY }))),
+  }
+}
+
+function bindAnnotationCopyPaste(): void {
+  window.addEventListener('keydown', (e) => {
+    if (!getPdfJsDocument()) return
+    if (isFormFieldTarget(e.target)) return
+
+    if (e.code === 'Delete') {
+      if (selectedId === null) return
+      e.preventDefault()
+      deleteAnnotationById(selectedId)
+      return
+    }
+
+    const mod = e.ctrlKey || e.metaKey
+    if (!mod) return
+
+    if (e.code === 'KeyC') {
+      if (selectedId === null) return
+      const ann = annotations.find((a) => a.id === selectedId)
+      if (!ann) return
+      e.preventDefault()
+      copiedAnnotationTemplate = cloneAnnotationForClipboard(ann)
+      return
+    }
+
+    if (e.code === 'KeyX') {
+      if (selectedId === null) return
+      const id = selectedId
+      const ann = annotations.find((a) => a.id === id)
+      if (!ann) return
+      e.preventDefault()
+      copiedAnnotationTemplate = cloneAnnotationForClipboard(ann)
+      deleteAnnotationById(id)
+      return
+    }
+
+    if (e.code === 'KeyV') {
+      if (!copiedAnnotationTemplate) return
+      e.preventDefault()
+      if (shiftPenCompose) finalizeShiftPenCompose()
+      if (activePenStroke) commitActivePenIfAny()
+      const at = lastPointerPdf ?? fallbackPastePointPdf()
+      const newAnn = annotationPastedAtTopLeft(
+        copiedAnnotationTemplate,
+        currentPage,
+        at,
+      )
+      newAnn.id = nextAnnId++
+      annotations.push(newAnn)
+      selectedId = newAnn.id
+      void refreshPage()
+      renderAnnotationsList()
+    }
+  })
+}
+
 /** Nudge selected annotation in overlay/canvas pixels (Shift = 1px, else 10px). */
 function bindAnnotationArrowNudge(): void {
   window.addEventListener('keydown', (e) => {
@@ -883,6 +1055,7 @@ function bindCanvas(): void {
     const x = Math.round(px / scale)
     const y = Math.round((overlay.height - py) / scale)
     $('st-coords').textContent = `${x}, ${y}`
+    lastPointerPdf = { x: px / scale, y: (overlay.height - py) / scale }
 
     if (
       editorMode === 'pen' &&
@@ -998,6 +1171,7 @@ bindStyleControls()
 bindCanvas()
 bindShiftPenFinalize()
 bindAnnotationArrowNudge()
+bindAnnotationCopyPaste()
 bindZoom()
 bindDragDrop()
 updatePageUi()
