@@ -79,6 +79,8 @@ export type EditorAction =
   | { type: 'DELETE_ANNOTATION'; id: number }
   | { type: 'ADD_ANNOTATION'; ann: Annotation }
   | { type: 'REPLACE_ANNOTATIONS'; annotations: Annotation[] }
+  /** Remap ids inside reducer; does not link to a specific PDF. */
+  | { type: 'IMPORT_ANNOTATIONS'; imported: Annotation[]; mode: 'replace' | 'append' }
   | { type: 'UPDATE_SELECTED_TEXT_STYLE'; fontId: string; size: number }
   | { type: 'UPDATE_SELECTED_TEXT_BOLD' }
   | { type: 'PATCH_ANNOTATIONS'; updater: (list: Annotation[]) => Annotation[] }
@@ -223,6 +225,22 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       }
     case 'REPLACE_ANNOTATIONS':
       return { ...state, annotations: action.annotations }
+    case 'IMPORT_ANNOTATIONS': {
+      const { imported, mode } = action
+      const startId = mode === 'replace' ? 1 : state.nextAnnId
+      const remapped: Annotation[] = imported.map((a, i) => {
+        const id = startId + i
+        if (a.kind === 'text') return { ...a, id }
+        return {
+          ...a,
+          id,
+          segments: a.segments.map((seg) => seg.map((p) => ({ x: p.x, y: p.y }))),
+        }
+      })
+      const annotations = mode === 'replace' ? remapped : [...state.annotations, ...remapped]
+      const nextAnnId = startId + remapped.length
+      return { ...state, annotations, nextAnnId, selectedId: null }
+    }
     case 'UPDATE_SELECTED_TEXT_STYLE': {
       const v = Math.min(200, Math.max(6, action.size))
       const next = {

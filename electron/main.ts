@@ -67,6 +67,45 @@ ipcMain.handle(
   },
 )
 
+ipcMain.handle(
+  'annotations:open',
+  async (
+    event,
+  ): Promise<
+    { canceled: true } | { canceled: false; filePath: string; text: string }
+  > => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const { canceled, filePaths } = await dialog.showOpenDialog(parent ?? undefined, {
+      properties: ['openFile'],
+      filters: [
+        { name: 'JSON', extensions: ['json'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    })
+    if (canceled || !filePaths[0]) return { canceled: true }
+    const text = await readFile(filePaths[0], 'utf8')
+    return { canceled: false, filePath: filePaths[0], text }
+  },
+)
+
+ipcMain.handle(
+  'annotations:save',
+  async (
+    event,
+    jsonText: string,
+    defaultPath?: string,
+  ): Promise<{ canceled: true } | { canceled: false; filePath: string }> => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const { canceled, filePath } = await dialog.showSaveDialog(parent ?? undefined, {
+      defaultPath,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (canceled || !filePath) return { canceled: true }
+    await writeFile(filePath, jsonText, 'utf8')
+    return { canceled: false, filePath }
+  },
+)
+
 app.whenReady().then(() => {
   createWindow()
   app.on('activate', () => {

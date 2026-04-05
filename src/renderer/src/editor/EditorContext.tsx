@@ -16,7 +16,7 @@ import { openPdfFromBuffer, renderPdfPage, getPdfJsDocument } from '../pdfSessio
 import type { Annotation, PdfPoint } from '../types'
 import { isPenAnnotation, isTextAnnotation } from '../types'
 import { annotationPastedAtTopLeft, cloneAnnotationForClipboard } from '../lib/clipboardAnnotation'
-import { canvasPointFromClient } from '../lib/canvasCoords'
+import { parseAnnotationsFile, serializeAnnotationsToJson } from '../lib/annotationJson'
 import { hexIsNearWhite, inkColorFromHex } from '../lib/color'
 import { penHasDrawableSegments, penPointsFarEnough } from '../lib/penGeometry'
 import { editorReducer, initialEditorState, type EditorAction, type EditorState } from './editorState'
@@ -41,6 +41,8 @@ export type EditorContextValue = {
   syncColorUi: (hex: string) => void
   openPdfFlow: () => Promise<void>
   savePdfFlow: () => Promise<void>
+  saveAnnotationsFlow: () => Promise<void>
+  openAnnotationsFlow: () => Promise<void>
   changePage: (delta: number) => Promise<void>
   setZoom: (next: number) => void
   setEditorMode: (mode: 'text' | 'pen') => void
@@ -51,6 +53,7 @@ export type EditorContextValue = {
   bindGlobalKeys: () => () => void
   bindShiftPenFinalize: () => () => void
   onPdfFileSelected: (file: File) => void
+  onAnnotationsFileSelected: (file: File) => void
   onDropPdfFile: (file: File) => void
   setDragTarget: (on: boolean) => void
 }
@@ -77,12 +80,18 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   const shiftPenComposeRef = useRef<ShiftPenCompose | null>(null)
   const copiedAnnotationTemplateRef = useRef<Annotation | null>(null)
   const lastPointerPdfRef = useRef<PdfPoint | null>(null)
+  const pendingAnnotationImportModeRef = useRef<'replace' | 'append'>('replace')
 
   const redrawOverlayOnly = useCallback(() => {
     if (!getPdfJsDocument()) return
+    const pdfCanvas = pdfCanvasRef.current
     const overlay = overlayCanvasRef.current
     const ctx = overlay?.getContext('2d')
-    if (!ctx || !overlay) return
+    if (!ctx || !overlay || !pdfCanvas) return
+    if (overlay.width !== pdfCanvas.width || overlay.height !== pdfCanvas.height) {
+      overlay.width = pdfCanvas.width
+      overlay.height = pdfCanvas.height
+    }
     const s = stateRef.current
     drawAnnotationOverlay(
       ctx,
@@ -281,6 +290,121 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const annotationsDefaultSavePath = useCallback((sourceFilePath: string | null) => {
+    if (sourceFilePath != null) {
+      return sourceFilePath.replace(/\.pdf$/i, '') + '_annotations.json'
+    }
+    return 'annotations.json'
+  }, [])
+
+  const saveAnnotationsFlow = useCallback(async () => {
+    const s = stateRef.current
+    if (!s.pdfSourceBytes) return
+    try {
+      const json = serializeAnnotationsToJson(s.annotations)
+      const suggested = annotationsDefaultSavePath(s.sourceFilePath)
+
+      if (window.electronAPI?.saveAnnotationsJson) {
+        const out = await window.electronAPI.saveAnnotationsJson(json, suggested)
+        if (!out.canceled) {
+          dispatch({
+            type: 'SET_STATUS_FILE',
+            label: out.filePath.replace(/\\/g, '/').split('/').pop() ?? 'annotations.json',
+          })
+        }
+        return
+      }
+
+      const filename = suggested.replace(/\\/g, '/').split('/').pop() ?? 'annotations.json'
+      const blob = new Blob([json], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.rel = 'noopener'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      dispatch({ type: 'SET_STATUS_FILE', label: filename })
+    } catch (e) {
+      console.error(e)
+      const msg = e instanceof Error ? e.message : String(e)
+      window.alert(`Could not save annotations: ${msg}`)
+    }
+  }, [annotationsDefaultSavePath])
+
+  const openAnnotationsFlow = useCallback(async () => {
+    const s = stateRef.current
+    if (!s.pdfSourceBytes) {
+      window.alert('Open a PDF first before loading annotations.')
+      return
+    }
+
+    let mode: 'replace' | 'append' = 'replace'
+    if (s.annotations.length > 0) {
+      const replace = window.confirm(
+        'You already have annotations on this PDF.\n\n' +
+          'Click OK to remove existing annotations before load, or Cancel to proceed with the load without deleting.',
+      )
+      mode = replace ? 'replace' : 'append'
+    }
+
+    try {
+      if (window.electronAPI?.openAnnotationsFile) {
+        const res = await window.electronAPI.openAnnotationsFile()
+        if (res.canceled) return
+        finalizeShiftPenCompose()
+        activePenStrokeRef.current = null
+        const list = parseAnnotationsFile(res.text)
+        dispatch({ type: 'IMPORT_ANNOTATIONS', imported: list, mode })
+        return
+      }
+
+      finalizeShiftPenCompose()
+      activePenStrokeRef.current = null
+      pendingAnnotationImportModeRef.current = mode
+      const input = document.getElementById('annotations-file-input') as HTMLInputElement | null
+      if (input) {
+        input.value = ''
+        input.click()
+      }
+    } catch (e) {
+      console.error(e)
+      const msg = e instanceof Error ? e.message : String(e)
+      window.alert(`Could not load annotations: ${msg}`)
+    }
+  }, [finalizeShiftPenCompose])
+
+  const onAnnotationsFileSelected = useCallback(
+    (file: File) => {
+      const ok =
+        file.type === 'application/json' ||
+        file.name.toLowerCase().endsWith('.json')
+      if (!ok) return
+      const mode = pendingAnnotationImportModeRef.current
+      const reader = new FileReader()
+      reader.onload = () => {
+        try {
+          const text = reader.result as string
+          const list = parseAnnotationsFile(text)
+          dispatch({ type: 'IMPORT_ANNOTATIONS', imported: list, mode })
+        } catch (e) {
+          console.error(e)
+          const msg = e instanceof Error ? e.message : String(e)
+          window.alert(`Could not load annotations: ${msg}`)
+        }
+      }
+      reader.onerror = () => {
+        console.error(reader.error)
+        const msg = reader.error?.message ?? 'File read failed'
+        window.alert(`Could not read file: ${msg}`)
+      }
+      reader.readAsText(file, 'UTF-8')
+    },
+    [],
+  )
+
   const changePage = useCallback(
     async (delta: number) => {
       const s = stateRef.current
@@ -438,19 +562,40 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   )
 
   const bindCanvasListeners = useCallback(() => {
+    const stack = canvasStackRef.current
+    const pdfCanvas = pdfCanvasRef.current
     const overlay = overlayCanvasRef.current
-    if (!overlay) return () => {}
+    if (!stack || !pdfCanvas || !overlay) return () => {}
+
+    /** Map client position to PDF canvas bitmap pixels (overlay is kept matching this bitmap). */
+    const bitmapFromClient = (clientX: number, clientY: number) => {
+      const pr = pdfCanvas.getBoundingClientRect()
+      const bw = pdfCanvas.width
+      const bh = pdfCanvas.height
+      if (bw <= 0 || bh <= 0 || pr.width <= 0 || pr.height <= 0) return null
+      const px = ((clientX - pr.left) / pr.width) * bw
+      const py = ((clientY - pr.top) / pr.height) * bh
+      return { px, py, bh }
+    }
+
+    const pdfPointFromClient = (clientX: number, clientY: number, scale: number): PdfPoint | null => {
+      const bm = bitmapFromClient(clientX, clientY)
+      if (!bm) return null
+      return { x: bm.px / scale, y: (bm.bh - bm.py) / scale }
+    }
 
     const onPointerDown = (e: PointerEvent) => {
       if (!getPdfJsDocument()) return
       if (stateRef.current.editorMode !== 'pen') return
       if (e.button !== 0) return
       if (isFormFieldTarget(e.target)) return
+      if (e.target !== pdfCanvas && e.target !== overlay) return
       e.preventDefault()
-      overlay.setPointerCapture(e.pointerId)
+      stack.setPointerCapture(e.pointerId)
       const s = stateRef.current
       const sw = s.penStrokeWidthPdf
-      const p0 = canvasPointFromClient(overlay, e.clientX, e.clientY, s.scale)
+      const p0 = pdfPointFromClient(e.clientX, e.clientY, s.scale)
+      if (!p0) return
       dispatch({ type: 'SELECT_ID', id: null })
 
       if (e.shiftKey) {
@@ -497,7 +642,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     const endPen = (e: PointerEvent) => {
       if (stateRef.current.editorMode !== 'pen') return
       try {
-        overlay.releasePointerCapture(e.pointerId)
+        stack.releasePointerCapture(e.pointerId)
       } catch {
         /* no capture */
       }
@@ -514,13 +659,13 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     const onPointerMove = (e: PointerEvent) => {
       if (!getPdfJsDocument()) return
       const s = stateRef.current
-      const rect = overlay.getBoundingClientRect()
-      const px = e.clientX - rect.left
-      const py = e.clientY - rect.top
-      const x = Math.round(px / s.scale)
-      const y = Math.round((overlay.height - py) / s.scale)
-      dispatch({ type: 'SET_COORDS', label: `${x}, ${y}` })
-      lastPointerPdfRef.current = { x: px / s.scale, y: (overlay.height - py) / s.scale }
+      const bm = bitmapFromClient(e.clientX, e.clientY)
+      if (bm) {
+        const x = Math.round(bm.px / s.scale)
+        const y = Math.round((bm.bh - bm.py) / s.scale)
+        dispatch({ type: 'SET_COORDS', label: `${x}, ${y}` })
+        lastPointerPdfRef.current = { x: bm.px / s.scale, y: (bm.bh - bm.py) / s.scale }
+      }
 
       const compose = shiftPenComposeRef.current
       if (
@@ -530,7 +675,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         compose.current.length > 0
       ) {
         e.preventDefault()
-        const p = canvasPointFromClient(overlay, e.clientX, e.clientY, s.scale)
+        const p = pdfPointFromClient(e.clientX, e.clientY, s.scale)
+        if (!p) return
         const last = compose.current[compose.current.length - 1]!
         if (penPointsFarEnough(last, p)) compose.current.push(p)
         redrawOverlayOnly()
@@ -540,7 +686,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         activePenStrokeRef.current.page === s.currentPage
       ) {
         e.preventDefault()
-        const p = canvasPointFromClient(overlay, e.clientX, e.clientY, s.scale)
+        const p = pdfPointFromClient(e.clientX, e.clientY, s.scale)
+        if (!p) return
         const pts = activePenStrokeRef.current.points
         const last = pts[pts.length - 1]!
         if (penPointsFarEnough(last, p)) pts.push(p)
@@ -548,22 +695,28 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const onClick = (e: MouseEvent) => {
+    const onStackClick = (e: MouseEvent) => {
       if (!getPdfJsDocument()) return
       if (stateRef.current.editorMode === 'pen') return
+      if (isFormFieldTarget(e.target)) return
+      if (e.target !== pdfCanvas && e.target !== overlay) return
       const s = stateRef.current
-      const rect = overlay.getBoundingClientRect()
-      const px = e.clientX - rect.left
-      const py = e.clientY - rect.top
+      if (overlay.width !== pdfCanvas.width || overlay.height !== pdfCanvas.height) {
+        overlay.width = pdfCanvas.width
+        overlay.height = pdfCanvas.height
+        redrawOverlayOnly()
+      }
+      const bm = bitmapFromClient(e.clientX, e.clientY)
+      if (!bm) return
       const ctx = overlay.getContext('2d')
       if (!ctx) return
       const hit = findAnnotationAtCanvasPoint(
         ctx,
-        overlay.height,
+        bm.bh,
         s.scale,
         s.currentPage,
-        px,
-        py,
+        bm.px,
+        bm.py,
         s.annotations,
       )
       if (hit) {
@@ -571,23 +724,23 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         return
       }
       dispatch({ type: 'SELECT_ID', id: null })
-      const pdfX = px / s.scale
-      const pdfY = (overlay.height - py) / s.scale
+      const pdfX = bm.px / s.scale
+      const pdfY = (bm.bh - bm.py) / s.scale
       showInlineInput(e.clientX, e.clientY, pdfX, pdfY)
     }
 
-    overlay.addEventListener('pointerdown', onPointerDown)
-    overlay.addEventListener('pointerup', endPen)
-    overlay.addEventListener('pointercancel', endPen)
-    overlay.addEventListener('pointermove', onPointerMove)
-    overlay.addEventListener('click', onClick)
+    stack.addEventListener('pointerdown', onPointerDown)
+    stack.addEventListener('pointerup', endPen)
+    stack.addEventListener('pointercancel', endPen)
+    stack.addEventListener('pointermove', onPointerMove)
+    stack.addEventListener('click', onStackClick)
 
     return () => {
-      overlay.removeEventListener('pointerdown', onPointerDown)
-      overlay.removeEventListener('pointerup', endPen)
-      overlay.removeEventListener('pointercancel', endPen)
-      overlay.removeEventListener('pointermove', onPointerMove)
-      overlay.removeEventListener('click', onClick)
+      stack.removeEventListener('pointerdown', onPointerDown)
+      stack.removeEventListener('pointerup', endPen)
+      stack.removeEventListener('pointercancel', endPen)
+      stack.removeEventListener('pointermove', onPointerMove)
+      stack.removeEventListener('click', onStackClick)
     }
   }, [
     commitActivePenIfAny,
@@ -767,6 +920,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     syncColorUi,
     openPdfFlow,
     savePdfFlow,
+    saveAnnotationsFlow,
+    openAnnotationsFlow,
     changePage,
     setZoom,
     setEditorMode,
@@ -777,6 +932,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     bindGlobalKeys,
     bindShiftPenFinalize,
     onPdfFileSelected,
+    onAnnotationsFileSelected,
     onDropPdfFile,
     setDragTarget,
   }

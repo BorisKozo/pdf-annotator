@@ -10,6 +10,7 @@ export function CanvasArea() {
     canvasStackRef,
     setZoom,
     onPdfFileSelected,
+    onAnnotationsFileSelected,
     onDropPdfFile,
     setDragTarget,
     bindCanvasListeners,
@@ -76,6 +77,18 @@ export function CanvasArea() {
           const f = e.target.files?.[0]
           e.target.value = ''
           if (f) onPdfFileSelected(f)
+        }}
+      />
+      <input
+        type="file"
+        id="annotations-file-input"
+        accept=".json,application/json"
+        hidden
+        aria-hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          e.target.value = ''
+          if (f) onAnnotationsFileSelected(f)
         }}
       />
       <div

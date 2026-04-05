@@ -1,7 +1,8 @@
 import { useEditor } from '../editor/EditorContext'
 
 export function Toolbar() {
-  const { state, openPdfFlow, savePdfFlow, changePage } = useEditor()
+  const { state, openPdfFlow, savePdfFlow, saveAnnotationsFlow, openAnnotationsFlow, changePage } =
+    useEditor()
   const { totalPages, currentPage, pdfSourceBytes } = state
   const pageLabel = totalPages > 0 ? `${currentPage} / ${totalPages}` : '—'
   const navDisabled = totalPages === 0
@@ -30,6 +31,26 @@ export function Toolbar() {
         onClick={() => void savePdfFlow()}
       >
         Save PDF
+      </button>
+      <button
+        type="button"
+        className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-4 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
+        id="btn-open-annotations"
+        disabled={pdfSourceBytes === null}
+        title="Load annotations from a JSON file (PDF must be open)"
+        onClick={() => void openAnnotationsFlow()}
+      >
+        Open Annotations
+      </button>
+      <button
+        type="button"
+        className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-4 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
+        id="btn-save-annotations"
+        disabled={pdfSourceBytes === null}
+        title="Save current annotations to a JSON file"
+        onClick={() => void saveAnnotationsFlow()}
+      >
+        Save Annotations
       </button>
       <span className="mx-1 h-[22px] w-px bg-[var(--border)]" />
       <div

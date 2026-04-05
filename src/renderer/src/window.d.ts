@@ -11,6 +11,13 @@ declare global {
         data: ArrayBuffer,
         defaultPath?: string,
       ) => Promise<{ canceled: true } | { canceled: false; filePath: string }>
+      openAnnotationsFile: () => Promise<
+        { canceled: true } | { canceled: false; filePath: string; text: string }
+      >
+      saveAnnotationsJson: (
+        jsonText: string,
+        defaultPath?: string,
+      ) => Promise<{ canceled: true } | { canceled: false; filePath: string }>
     }
   }
 }
