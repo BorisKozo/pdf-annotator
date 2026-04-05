@@ -10,6 +10,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "jsx": "react-jsx",
     "types": ["node", "vite/client"],
     "baseUrl": ".",
     "paths": {

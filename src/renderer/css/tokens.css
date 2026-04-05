@@ -1,0 +1,13 @@
+:root {
+  --bg: #12141a;
+  --surface: #1c2028;
+  --panel: #252a34;
+  --accent: #5b8cff;
+  --accent-hover: #7aa3ff;
+  --text: #e8eaed;
+  --muted: #9aa3af;
+  --border: rgba(255, 255, 255, 0.08);
+  --toolbar-h: 52px;
+  --sidebar-w: 280px;
+  --font-sans: 'Segoe UI', system-ui, sans-serif;
+}
