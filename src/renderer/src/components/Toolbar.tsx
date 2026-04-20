@@ -1,9 +1,59 @@
+import { useEffect, useState } from 'react'
 import { useEditor } from '../editor/EditorContext'
+
+function formatRelative(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 5) return 'just now'
+  if (s < 60) return `${s}s ago`
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.round(m / 60)
+  return `${h}h ago`
+}
+
+function AutosaveIndicator({ at }: { at: number | null }) {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (at === null) return
+    const id = window.setInterval(() => tick((n) => n + 1), 15_000)
+    return () => window.clearInterval(id)
+  }, [at])
+
+  const title =
+    at === null
+      ? 'Autosave: no save yet this session'
+      : `Autosaved ${formatRelative(Date.now() - at)} (${new Date(at).toLocaleTimeString()})`
+  const active = at !== null
+
+  return (
+    <span
+      className={`ml-2 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--panel)] ${active ? 'text-[var(--accent)]' : 'text-[var(--muted)]'}`}
+      title={title}
+      aria-label={title}
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="h-4 w-4"
+        aria-hidden="true"
+      >
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+        <polyline points="17 21 17 13 7 13 7 21" />
+        <polyline points="7 3 7 8 15 8" />
+      </svg>
+    </span>
+  )
+}
 
 export function Toolbar() {
   const { state, openPdfFlow, savePdfFlow, saveAnnotationsFlow, openAnnotationsFlow, changePage } =
     useEditor()
-  const { totalPages, currentPage, pdfSourceBytes } = state
+  const { totalPages, currentPage, pdfSourceBytes, lastAutosaveAt } = state
   const pageLabel = totalPages > 0 ? `${currentPage} / ${totalPages}` : '—'
   const navDisabled = totalPages === 0
 
@@ -90,6 +140,7 @@ export function Toolbar() {
           →
         </button>
       </div>
+      <AutosaveIndicator at={lastAutosaveAt} />
     </header>
   )
 }

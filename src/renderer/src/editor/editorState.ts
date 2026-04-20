@@ -23,6 +23,8 @@ export type EditorState = {
   statusFileLabel: string
   coordsLabel: string
   pdfDocumentLoaded: boolean
+  /** Epoch ms of the last successful autosave in this session, or null. */
+  lastAutosaveAt: number | null
 }
 
 export const initialEditorState: EditorState = {
@@ -43,6 +45,7 @@ export const initialEditorState: EditorState = {
   statusFileLabel: '—',
   coordsLabel: '—',
   pdfDocumentLoaded: false,
+  lastAutosaveAt: null,
 }
 
 export type EditorAction =
@@ -84,6 +87,7 @@ export type EditorAction =
   | { type: 'UPDATE_SELECTED_TEXT_STYLE'; fontId: string; size: number }
   | { type: 'UPDATE_SELECTED_TEXT_BOLD' }
   | { type: 'PATCH_ANNOTATIONS'; updater: (list: Annotation[]) => Annotation[] }
+  | { type: 'SET_LAST_AUTOSAVE'; at: number }
 
 function baseName(pathOrName: string): string {
   return pathOrName.replace(/\\/g, '/').split('/').pop() ?? 'document.pdf'
@@ -275,6 +279,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
     case 'PATCH_ANNOTATIONS':
       return { ...state, annotations: action.updater(state.annotations) }
+    case 'SET_LAST_AUTOSAVE':
+      return { ...state, lastAutosaveAt: action.at }
     default:
       return state
   }

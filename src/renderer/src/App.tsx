@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useEditor } from './editor/EditorContext'
 import { CanvasArea } from './components/CanvasArea'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { Sidebar } from './components/Sidebar'
 import { StatusBar } from './components/StatusBar'
 import { Toolbar } from './components/Toolbar'
@@ -18,6 +19,20 @@ function GlobalBindings() {
   return null
 }
 
+function GlobalConfirmDialog() {
+  const { confirmSpec, resolveConfirm } = useEditor()
+  return (
+    <ConfirmDialog
+      open={confirmSpec !== null}
+      title={confirmSpec?.title ?? ''}
+      message={confirmSpec?.message ?? ''}
+      yesLabel={confirmSpec?.yesLabel}
+      noLabel={confirmSpec?.noLabel}
+      onResolve={resolveConfirm}
+    />
+  )
+}
+
 export function App() {
   return (
     <div className="flex min-h-0 flex-1 flex-col px-4 sm:px-5">
@@ -28,6 +43,7 @@ export function App() {
         <CanvasArea />
       </div>
       <StatusBar />
+      <GlobalConfirmDialog />
     </div>
   )
 }

@@ -6,6 +6,11 @@ export const ANNOTATIONS_FILE_VERSION = 1
 const DEFAULT_FONT_ID = FONT_CATALOG[0]!.id
 const fontIds = new Set(FONT_CATALOG.map((f) => f.id))
 
+export type ParsedAnnotationsFile = {
+  annotations: Annotation[]
+  pdfPath: string | null
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
 }
@@ -52,7 +57,7 @@ function parsePenAnnotation(raw: Record<string, unknown>): PenAnnotation {
   for (let s = 0; s < raw.segments.length; s++) {
     const seg = raw.segments[s]
     if (!Array.isArray(seg)) throw new Error(`pen.segments[${s}] must be an array`)
-    segments.push(seg.map((p, i) => parsePdfPoint(p)))
+    segments.push(seg.map((p) => parsePdfPoint(p)))
   }
   return {
     kind: 'pen',
@@ -75,8 +80,8 @@ function parseOneAnnotation(raw: unknown, index: number): Annotation {
   throw new Error(`Annotation ${index}: kind must be "text" or "pen"`)
 }
 
-/** Parse JSON from a saved annotations file (array or `{ version, annotations }`). */
-export function parseAnnotationsFile(text: string): Annotation[] {
+/** Parse JSON from a saved annotations file (array or `{ version, pdfPath?, annotations }`). */
+export function parseAnnotationsFile(text: string): ParsedAnnotationsFile {
   let data: unknown
   try {
     data = JSON.parse(text) as unknown
@@ -86,21 +91,46 @@ export function parseAnnotationsFile(text: string): Annotation[] {
   }
 
   let rawList: unknown
+  let pdfPath: string | null = null
   if (Array.isArray(data)) {
     rawList = data
   } else if (isRecord(data) && Array.isArray(data.annotations)) {
     rawList = data.annotations
+    if (typeof data.pdfPath === 'string' && data.pdfPath.length > 0) {
+      pdfPath = data.pdfPath
+    }
   } else {
     throw new Error('Expected a JSON array of annotations or an object with an "annotations" array')
   }
 
-  return (rawList as unknown[]).map((item, i) => parseOneAnnotation(item, i))
+  const annotations = (rawList as unknown[]).map((item, i) => parseOneAnnotation(item, i))
+  return { annotations, pdfPath }
 }
 
-export function serializeAnnotationsToJson(annotations: Annotation[]): string {
+export function serializeAnnotationsToJson(
+  annotations: Annotation[],
+  pdfPath: string | null,
+): string {
   return JSON.stringify(
-    { version: ANNOTATIONS_FILE_VERSION, annotations },
+    {
+      version: ANNOTATIONS_FILE_VERSION,
+      pdfPath: pdfPath ?? undefined,
+      annotations,
+    },
     null,
     2,
   )
+}
+
+/** Normalize a pdf path for comparison: forward slashes, lowercased, trimmed. */
+export function normalizePdfPath(p: string | null | undefined): string {
+  if (!p) return ''
+  return p.replace(/\\/g, '/').trim().toLowerCase()
+}
+
+export function pdfPathsMatch(a: string | null, b: string | null): boolean {
+  const na = normalizePdfPath(a)
+  const nb = normalizePdfPath(b)
+  if (!na || !nb) return false
+  return na === nb
 }

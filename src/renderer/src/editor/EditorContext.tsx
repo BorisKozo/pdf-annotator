@@ -2,9 +2,11 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useReducer,
   useRef,
+  useState,
   type ReactNode,
   type RefObject,
 } from 'react'
@@ -16,7 +18,14 @@ import { openPdfFromBuffer, renderPdfPage, getPdfJsDocument } from '../pdfSessio
 import type { Annotation, PdfPoint } from '../types'
 import { isPenAnnotation, isTextAnnotation } from '../types'
 import { annotationPastedAtTopLeft, cloneAnnotationForClipboard } from '../lib/clipboardAnnotation'
-import { parseAnnotationsFile, serializeAnnotationsToJson } from '../lib/annotationJson'
+import {
+  parseAnnotationsFile,
+  pdfPathsMatch,
+  serializeAnnotationsToJson,
+  type ParsedAnnotationsFile,
+} from '../lib/annotationJson'
+import { deleteAutosave, readAutosave, writeAutosave } from '../lib/autosaveStorage'
+import type { ConfirmResult } from '../components/ConfirmDialog'
 import { hexIsNearWhite, inkColorFromHex } from '../lib/color'
 import { penHasDrawableSegments, penPointsFarEnough } from '../lib/penGeometry'
 import { editorReducer, initialEditorState, type EditorAction, type EditorState } from './editorState'
@@ -28,6 +37,13 @@ function isFormFieldTarget(target: EventTarget | null): boolean {
   if (target.isContentEditable) return true
   const t = target.tagName
   return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT'
+}
+
+export type ConfirmSpec = {
+  title: string
+  message: string
+  yesLabel?: string
+  noLabel?: string
 }
 
 export type EditorContextValue = {
@@ -56,6 +72,8 @@ export type EditorContextValue = {
   onAnnotationsFileSelected: (file: File) => void
   onDropPdfFile: (file: File) => void
   setDragTarget: (on: boolean) => void
+  confirmSpec: ConfirmSpec | null
+  resolveConfirm: (result: ConfirmResult) => void
 }
 
 const EditorContext = createContext<EditorContextValue | null>(null)
@@ -81,6 +99,26 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   const copiedAnnotationTemplateRef = useRef<Annotation | null>(null)
   const lastPointerPdfRef = useRef<PdfPoint | null>(null)
   const pendingAnnotationImportModeRef = useRef<'replace' | 'append'>('replace')
+  const lastAutosavedJsonRef = useRef<string | null>(null)
+
+  const [confirmSpec, setConfirmSpec] = useState<ConfirmSpec | null>(null)
+  const confirmResolverRef = useRef<((r: ConfirmResult) => void) | null>(null)
+
+  const requestConfirm = useCallback((spec: ConfirmSpec): Promise<ConfirmResult> => {
+    return new Promise<ConfirmResult>((resolve) => {
+      const prior = confirmResolverRef.current
+      if (prior) prior('cancel')
+      confirmResolverRef.current = resolve
+      setConfirmSpec(spec)
+    })
+  }, [])
+
+  const resolveConfirm = useCallback((result: ConfirmResult) => {
+    const resolver = confirmResolverRef.current
+    confirmResolverRef.current = null
+    setConfirmSpec(null)
+    resolver?.(result)
+  }, [])
 
   const redrawOverlayOnly = useCallback(() => {
     if (!getPdfJsDocument()) return
@@ -221,6 +259,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     activePenStrokeRef.current = null
     discardShiftPenCompose()
     const totalPages = await openPdfFromBuffer(buffer.slice(0))
+    lastAutosavedJsonRef.current = null
     dispatch({
       type: 'PDF_OPENED',
       buffer,
@@ -228,6 +267,18 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       totalPages,
     })
   }, [discardShiftPenCompose])
+
+  const tryOpenPdfByPath = useCallback(
+    async (filePath: string): Promise<boolean> => {
+      const api = window.electronAPI
+      if (!api?.openPDFByPath) return false
+      const res = await api.openPDFByPath(filePath)
+      if (!res.ok) return false
+      await applyOpenedPdf(res.data, res.filePath)
+      return true
+    },
+    [applyOpenedPdf],
+  )
 
   const openPdfFlow = useCallback(async () => {
     try {
@@ -301,7 +352,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     const s = stateRef.current
     if (!s.pdfSourceBytes) return
     try {
-      const json = serializeAnnotationsToJson(s.annotations)
+      const json = serializeAnnotationsToJson(s.annotations, s.sourceFilePath)
       const suggested = annotationsDefaultSavePath(s.sourceFilePath)
 
       if (window.electronAPI?.saveAnnotationsJson) {
@@ -334,6 +385,53 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     }
   }, [annotationsDefaultSavePath])
 
+  /**
+   * Apply annotations loaded from a file into the current session.
+   * If the file's pdfPath doesn't match the open PDF, prompt to open the saved
+   * PDF instead. Dialog outcomes: yes → open saved PDF then load; no → load
+   * into current PDF; cancel → abort.
+   */
+  const applyLoadedAnnotations = useCallback(
+    async (parsed: ParsedAnnotationsFile, mode: 'replace' | 'append') => {
+      const s = stateRef.current
+      const loadedPath = parsed.pdfPath
+      const currentPath = s.sourceFilePath
+      const mismatch =
+        loadedPath != null &&
+        currentPath != null &&
+        !pdfPathsMatch(loadedPath, currentPath)
+
+      if (mismatch) {
+        const result = await requestConfirm({
+          title: 'PDF mismatch',
+          message:
+            'The open document does not match the annotation file.\n\n' +
+            `Saved PDF: ${loadedPath ?? '(unknown)'}\n` +
+            `Open PDF: ${currentPath ?? '(none)'}\n\n` +
+            'Do you want to open the correct document?',
+        })
+        if (result === 'cancel') return
+        if (result === 'yes') {
+          const ok = await tryOpenPdfByPath(loadedPath!)
+          if (!ok) {
+            window.alert(`Could not open PDF:\n${loadedPath}`)
+            return
+          }
+          dispatch({
+            type: 'IMPORT_ANNOTATIONS',
+            imported: parsed.annotations,
+            mode: 'replace',
+          })
+          return
+        }
+        // 'no' falls through — load into currently open PDF
+      }
+
+      dispatch({ type: 'IMPORT_ANNOTATIONS', imported: parsed.annotations, mode })
+    },
+    [requestConfirm, tryOpenPdfByPath],
+  )
+
   const openAnnotationsFlow = useCallback(async () => {
     const s = stateRef.current
     if (!s.pdfSourceBytes) {
@@ -356,8 +454,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         if (res.canceled) return
         finalizeShiftPenCompose()
         activePenStrokeRef.current = null
-        const list = parseAnnotationsFile(res.text)
-        dispatch({ type: 'IMPORT_ANNOTATIONS', imported: list, mode })
+        const parsed = parseAnnotationsFile(res.text)
+        await applyLoadedAnnotations(parsed, mode)
         return
       }
 
@@ -374,7 +472,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       const msg = e instanceof Error ? e.message : String(e)
       window.alert(`Could not load annotations: ${msg}`)
     }
-  }, [finalizeShiftPenCompose])
+  }, [applyLoadedAnnotations, finalizeShiftPenCompose])
 
   const onAnnotationsFileSelected = useCallback(
     (file: File) => {
@@ -387,8 +485,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       reader.onload = () => {
         try {
           const text = reader.result as string
-          const list = parseAnnotationsFile(text)
-          dispatch({ type: 'IMPORT_ANNOTATIONS', imported: list, mode })
+          const parsed = parseAnnotationsFile(text)
+          void applyLoadedAnnotations(parsed, mode)
         } catch (e) {
           console.error(e)
           const msg = e instanceof Error ? e.message : String(e)
@@ -402,7 +500,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       }
       reader.readAsText(file, 'UTF-8')
     },
-    [],
+    [applyLoadedAnnotations],
   )
 
   const changePage = useCallback(
@@ -885,9 +983,11 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     (file: File) => {
       const ok = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
       if (!ok) return
+      const fullPath = window.electronAPI?.getPathForFile?.(file) ?? ''
+      const pathOrName = fullPath || file.name
       const reader = new FileReader()
       reader.onload = () => {
-        void applyOpenedPdf(reader.result as ArrayBuffer, file.name).catch((err) => {
+        void applyOpenedPdf(reader.result as ArrayBuffer, pathOrName).catch((err) => {
           console.error(err)
           const msg = err instanceof Error ? err.message : String(err)
           window.alert(`Could not open PDF: ${msg}`)
@@ -908,6 +1008,67 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   const setDragTarget = useCallback((on: boolean) => {
     document.body.classList.toggle('drag-target', on)
   }, [])
+
+  /** Autosave every 60 s while a PDF is open, skipping if the payload hasn't changed. */
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const s = stateRef.current
+      if (!s.pdfSourceBytes) return
+      const json = serializeAnnotationsToJson(s.annotations, s.sourceFilePath)
+      if (json === lastAutosavedJsonRef.current) return
+      lastAutosavedJsonRef.current = json
+      void writeAutosave(json).then(() => {
+        dispatch({ type: 'SET_LAST_AUTOSAVE', at: Date.now() })
+      })
+    }, 60_000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  /** Startup recovery: if an autosave exists, prompt to restore it. */
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const text = await readAutosave()
+      if (cancelled || !text) return
+      let parsed: ParsedAnnotationsFile
+      try {
+        parsed = parseAnnotationsFile(text)
+      } catch {
+        return
+      }
+      if (parsed.annotations.length === 0) return
+
+      const savedPath = parsed.pdfPath ?? '(unknown PDF)'
+      const result = await requestConfirm({
+        title: 'Restore autosaved annotations?',
+        message:
+          'Unsaved annotations were found from a previous session.\n\n' +
+          `Saved PDF: ${savedPath}\n\n` +
+          'Do you want to open the correct document and restore these annotations?',
+      })
+      if (cancelled) return
+      if (result !== 'yes') return
+
+      if (!parsed.pdfPath) {
+        window.alert('The autosave does not contain a PDF path.')
+        return
+      }
+      const ok = await tryOpenPdfByPath(parsed.pdfPath)
+      if (!ok) {
+        window.alert(`Could not open PDF:\n${parsed.pdfPath}`)
+        return
+      }
+      dispatch({
+        type: 'IMPORT_ANNOTATIONS',
+        imported: parsed.annotations,
+        mode: 'replace',
+      })
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [requestConfirm, tryOpenPdfByPath])
 
   const value: EditorContextValue = {
     state,
@@ -935,6 +1096,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     onAnnotationsFileSelected,
     onDropPdfFile,
     setDragTarget,
+    confirmSpec,
+    resolveConfirm,
   }
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>

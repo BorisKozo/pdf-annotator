@@ -1,9 +1,14 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile, unlink } from 'node:fs/promises'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+const AUTOSAVE_FILENAME = 'pdf-editor-autosave.json'
+function autosavePath(): string {
+  return path.join(app.getPath('temp'), AUTOSAVE_FILENAME)
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -14,7 +19,7 @@ function createWindow(): void {
       preload: path.join(__dirname, '..', 'preload', 'preload.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
     },
   })
 
@@ -46,6 +51,26 @@ ipcMain.handle(
     const copy = new Uint8Array(buf.length)
     copy.set(buf)
     return { canceled: false, filePath: filePaths[0], data: copy.buffer as ArrayBuffer }
+  },
+)
+
+ipcMain.handle(
+  'pdf:openByPath',
+  async (
+    _event,
+    filePath: string,
+  ): Promise<
+    { ok: true; filePath: string; data: ArrayBuffer } | { ok: false; error: string }
+  > => {
+    try {
+      const buf = await readFile(filePath)
+      const copy = new Uint8Array(buf.length)
+      copy.set(buf)
+      return { ok: true, filePath, data: copy.buffer as ArrayBuffer }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { ok: false, error: msg }
+    }
   },
 )
 
@@ -106,6 +131,33 @@ ipcMain.handle(
   },
 )
 
+ipcMain.handle('autosave:read', async (): Promise<{ text: string } | { text: null }> => {
+  try {
+    const text = await readFile(autosavePath(), 'utf8')
+    return { text }
+  } catch {
+    return { text: null }
+  }
+})
+
+ipcMain.handle('autosave:write', async (_event, jsonText: string): Promise<{ ok: boolean }> => {
+  try {
+    await writeFile(autosavePath(), jsonText, 'utf8')
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
+})
+
+ipcMain.handle('autosave:delete', async (): Promise<{ ok: boolean }> => {
+  try {
+    await unlink(autosavePath())
+  } catch {
+    /* ignore: file may not exist */
+  }
+  return { ok: true }
+})
+
 app.whenReady().then(() => {
   createWindow()
   app.on('activate', () => {
@@ -113,6 +165,20 @@ app.whenReady().then(() => {
       createWindow()
     }
   })
+})
+
+let autosaveCleaned = false
+app.on('before-quit', (e) => {
+  if (autosaveCleaned) return
+  e.preventDefault()
+  autosaveCleaned = true
+  unlink(autosavePath())
+    .catch(() => {
+      /* file may not exist */
+    })
+    .finally(() => {
+      app.quit()
+    })
 })
 
 app.on('window-all-closed', () => {
