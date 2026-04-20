@@ -1,5 +1,117 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useEditor } from '../editor/EditorContext'
+
+function FileMenu({
+  onOpenPdf,
+  onSavePdf,
+  onClosePdf,
+  onOpenAnnotations,
+  onSaveAnnotations,
+  pdfLoaded,
+}: {
+  onOpenPdf: () => void
+  onSavePdf: () => void
+  onClosePdf: () => void
+  onOpenAnnotations: () => void
+  onSaveAnnotations: () => void
+  pdfLoaded: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDocPointer = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const run = (fn: () => void) => {
+    setOpen(false)
+    fn()
+  }
+
+  const itemCls =
+    'flex w-full cursor-pointer items-center px-3 py-1.5 text-left text-xs text-[var(--text)] hover:bg-[rgba(255,255,255,0.06)] disabled:cursor-not-allowed disabled:opacity-35'
+  const sectionLabelCls =
+    'px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]'
+
+  return (
+    <div className="relative" ref={rootRef}>
+      <button
+        type="button"
+        className={`inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border px-4 text-xs ${
+          open
+            ? 'border-[var(--accent)] bg-[rgba(255,255,255,0.06)] text-[var(--text)]'
+            : 'border-[var(--border)] bg-[var(--panel)] text-[var(--text)] hover:border-[rgba(255,255,255,0.15)]'
+        }`}
+        id="btn-file-menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        File
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute left-0 top-[calc(100%+4px)] z-20 min-w-[200px] rounded-md border border-[var(--border)] bg-[var(--surface)] py-1 shadow-lg"
+        >
+          <div className={sectionLabelCls}>PDF</div>
+          <button type="button" role="menuitem" className={itemCls} onClick={() => run(onOpenPdf)}>
+            Open PDF…
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            disabled={!pdfLoaded}
+            onClick={() => run(onSavePdf)}
+          >
+            Save PDF…
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            disabled={!pdfLoaded}
+            onClick={() => run(onClosePdf)}
+          >
+            Close PDF
+          </button>
+          <div className="my-1 h-px bg-[var(--border)]" />
+          <div className={sectionLabelCls}>Annotations</div>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            onClick={() => run(onOpenAnnotations)}
+          >
+            Open Annotations…
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            disabled={!pdfLoaded}
+            onClick={() => run(onSaveAnnotations)}
+          >
+            Save Annotations…
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function formatRelative(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000))
@@ -51,96 +163,79 @@ function AutosaveIndicator({ at }: { at: number | null }) {
 }
 
 export function Toolbar() {
-  const { state, openPdfFlow, savePdfFlow, saveAnnotationsFlow, openAnnotationsFlow, changePage } =
-    useEditor()
+  const {
+    state,
+    openPdfFlow,
+    savePdfFlow,
+    saveAnnotationsFlow,
+    openAnnotationsFlow,
+    closePdfFlow,
+    changePage,
+  } = useEditor()
   const { totalPages, currentPage, pdfSourceBytes, lastAutosaveAt } = state
   const pageLabel = totalPages > 0 ? `${currentPage} / ${totalPages}` : '—'
   const navDisabled = totalPages === 0
 
   return (
     <header
-      className="flex h-[var(--toolbar-h)] shrink-0 items-center gap-2.5 border-b border-[var(--border)] bg-[var(--surface)] px-3 sm:px-4"
+      className="relative flex h-[var(--toolbar-h)] shrink-0 items-stretch border-b border-[var(--border)] bg-[var(--surface)]"
       id="toolbar"
     >
-      <span className="mr-3 text-sm font-bold uppercase tracking-widest text-[var(--accent)]">
-        Annotator
-      </span>
-      <button
-        type="button"
-        className="btn-primary inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--accent)] bg-[var(--accent)] px-4 text-xs font-semibold text-[#0b1020] hover:border-[var(--accent-hover)] hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-35"
-        id="btn-open"
-        onClick={() => void openPdfFlow()}
-      >
-        Open PDF
-      </button>
-      <button
-        type="button"
-        className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-4 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
-        id="btn-save"
-        disabled={pdfSourceBytes === null}
-        onClick={() => void savePdfFlow()}
-      >
-        Save PDF
-      </button>
-      <button
-        type="button"
-        className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-4 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
-        id="btn-open-annotations"
-        disabled={pdfSourceBytes === null}
-        title="Load annotations from a JSON file (PDF must be open)"
-        onClick={() => void openAnnotationsFlow()}
-      >
-        Open Annotations
-      </button>
-      <button
-        type="button"
-        className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-4 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
-        id="btn-save-annotations"
-        disabled={pdfSourceBytes === null}
-        title="Save current annotations to a JSON file"
-        onClick={() => void saveAnnotationsFlow()}
-      >
-        Save Annotations
-      </button>
-      <span className="mx-1 h-[22px] w-px bg-[var(--border)]" />
-      <div
-        className="ml-auto flex items-center gap-2"
-        id="page-nav"
-        title={
-          totalPages <= 0
-            ? 'Open a PDF to use page navigation'
-            : totalPages === 1
-              ? 'This document has only one page'
-              : `Page ${currentPage} of ${totalPages}`
-        }
-      >
-        <button
-          type="button"
-          className="inline-flex h-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
-          id="btn-prev"
-          aria-label="Previous page"
-          title="Previous page"
-          disabled={navDisabled || currentPage <= 1}
-          onClick={() => void changePage(-1)}
-        >
-          ←
-        </button>
-        <span className="min-w-[72px] text-center text-xs text-[var(--muted)]" id="page-info">
-          {pageLabel}
+      <div className="flex w-[var(--sidebar-w)] shrink-0 items-center gap-2.5 px-3 sm:px-4">
+        <span className="mr-3 text-sm font-bold uppercase tracking-widest text-[var(--accent)]">
+          Annotator
         </span>
-        <button
-          type="button"
-          className="inline-flex h-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
-          id="btn-next"
-          aria-label="Next page"
-          title="Next page"
-          disabled={navDisabled || currentPage >= totalPages}
-          onClick={() => void changePage(1)}
-        >
-          →
-        </button>
+        <FileMenu
+          onOpenPdf={() => void openPdfFlow()}
+          onSavePdf={() => void savePdfFlow()}
+          onClosePdf={() => void closePdfFlow()}
+          onOpenAnnotations={() => void openAnnotationsFlow()}
+          onSaveAnnotations={() => void saveAnnotationsFlow()}
+          pdfLoaded={pdfSourceBytes !== null}
+        />
       </div>
-      <AutosaveIndicator at={lastAutosaveAt} />
+      <div className="relative flex min-w-0 flex-1 items-center">
+        <div
+          className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2"
+          id="page-nav"
+          title={
+            totalPages <= 0
+              ? 'Open a PDF to use page navigation'
+              : totalPages === 1
+                ? 'This document has only one page'
+                : `Page ${currentPage} of ${totalPages}`
+          }
+        >
+          <button
+            type="button"
+            className="inline-flex h-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
+            id="btn-prev"
+            aria-label="Previous page"
+            title="Previous page"
+            disabled={navDisabled || currentPage <= 1}
+            onClick={() => void changePage(-1)}
+          >
+            ←
+          </button>
+          <span className="min-w-[72px] text-center text-xs text-[var(--muted)]" id="page-info">
+            {pageLabel}
+          </span>
+          <button
+            type="button"
+            className="inline-flex h-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
+            id="btn-next"
+            aria-label="Next page"
+            title="Next page"
+            disabled={navDisabled || currentPage >= totalPages}
+            onClick={() => void changePage(1)}
+          >
+            →
+          </button>
+        </div>
+      </div>
+      <div className="absolute right-0 top-1/2 flex -translate-y-1/2 items-center pr-2">
+        <AutosaveIndicator at={lastAutosaveAt} />
+      </div>
     </header>
   )
 }

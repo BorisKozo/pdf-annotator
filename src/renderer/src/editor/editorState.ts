@@ -88,6 +88,7 @@ export type EditorAction =
   | { type: 'UPDATE_SELECTED_TEXT_BOLD' }
   | { type: 'PATCH_ANNOTATIONS'; updater: (list: Annotation[]) => Annotation[] }
   | { type: 'SET_LAST_AUTOSAVE'; at: number }
+  | { type: 'PDF_CLOSED' }
 
 function baseName(pathOrName: string): string {
   return pathOrName.replace(/\\/g, '/').split('/').pop() ?? 'document.pdf'
@@ -281,6 +282,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return { ...state, annotations: action.updater(state.annotations) }
     case 'SET_LAST_AUTOSAVE':
       return { ...state, lastAutosaveAt: action.at }
+    case 'PDF_CLOSED':
+      return { ...initialEditorState }
     default:
       return state
   }
