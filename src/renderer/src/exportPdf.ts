@@ -1,10 +1,11 @@
-import { PDFDocument, rgb, LineCapStyle, type PDFFont, type PDFPage } from 'pdf-lib'
+import { PDFDocument, rgb, LineCapStyle, type PDFFont, type PDFPage, type StandardFonts } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import type { Annotation } from './types'
 import { isTextAnnotation } from './types'
 import { getTextDirection } from './bidi'
 import {
   getFontBytesForExport,
+  getFontEntry,
   PDF_EMBED_BOLD_HEBREW,
   PDF_EMBED_BOLD_LATIN,
 } from './fonts'
@@ -77,10 +78,33 @@ export async function buildAnnotatedPdfBytes(
     return font
   }
 
-  const anyBold = annotations.some((a) => isTextAnnotation(a) && a.bold === true)
-  let boldHe: Awaited<ReturnType<typeof embedFor>> | null = null
-  let boldLat: Awaited<ReturnType<typeof embedFor>> | null = null
-  if (anyBold) {
+  const embedStandard = (key: StandardFonts) => {
+    const hit = fontCache.get(key)
+    if (hit) return hit
+    const font = doc.embedStandardFont(key)
+    fontCache.set(key, font)
+    return font
+  }
+
+  const resolveFont = async (
+    fontId: string,
+    bold: boolean,
+  ): Promise<{ font: PDFFont; segmentedBold: false } | { segmentedBold: true }> => {
+    const entry = getFontEntry(fontId)
+    if (entry.standardFont) {
+      const key = bold && entry.standardFontBold ? entry.standardFontBold : entry.standardFont
+      return { font: embedStandard(key), segmentedBold: false }
+    }
+    if (bold) return { segmentedBold: true }
+    return { font: await embedFor(fontId), segmentedBold: false }
+  }
+
+  const needsHebrewBold = annotations.some(
+    (a) => isTextAnnotation(a) && a.bold === true && !getFontEntry(a.fontId).standardFont,
+  )
+  let boldHe: PDFFont | null = null
+  let boldLat: PDFFont | null = null
+  if (needsHebrewBold) {
     boldHe = await embedFor(PDF_EMBED_BOLD_HEBREW)
     boldLat = await embedFor(PDF_EMBED_BOLD_LATIN)
   }
@@ -100,6 +124,7 @@ export async function buildAnnotatedPdfBytes(
             end: { x: b.x, y: b.y },
             thickness: t,
             color,
+            opacity: ann.opacity,
             lineCap: LineCapStyle.Round,
           })
         }
@@ -108,7 +133,8 @@ export async function buildAnnotatedPdfBytes(
     }
 
     const rtl = getTextDirection(ann.text) === 'rtl'
-    if (ann.bold === true && boldHe && boldLat) {
+    const resolved = await resolveFont(ann.fontId, ann.bold === true)
+    if (resolved.segmentedBold && boldHe && boldLat) {
       drawBoldSegmented(
         page,
         ann.text,
@@ -120,8 +146,8 @@ export async function buildAnnotatedPdfBytes(
         boldHe,
         boldLat,
       )
-    } else {
-      const font = await embedFor(ann.fontId)
+    } else if (!resolved.segmentedBold) {
+      const font = resolved.font
       const w = font.widthOfTextAtSize(ann.text, ann.size)
       const xPdf = rtl ? ann.x - w : ann.x
       page.drawText(ann.text, {

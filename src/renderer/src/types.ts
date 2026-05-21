@@ -29,6 +29,8 @@ export interface PenAnnotation {
   segments: PdfPoint[][]
   /** Stroke width in PDF points. */
   strokeWidth: number
+  /** 0..1. Omitted = 1 (fully opaque). Highlight annotations use 0.3. */
+  opacity?: number
   r: number
   g: number
   b: number

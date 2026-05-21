@@ -8,6 +8,7 @@ export function CanvasArea() {
     overlayCanvasRef,
     inlineInputRef,
     canvasStackRef,
+    axisLockRef,
     setZoom,
     onPdfFileSelected,
     onAnnotationsFileSelected,
@@ -20,6 +21,7 @@ export function CanvasArea() {
   const scaleRef = useRef(state.scale)
   scaleRef.current = state.scale
   const cleanupCanvasRef = useRef<(() => void) | null>(null)
+  const highlightCursorRef = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
     cleanupCanvasRef.current?.()
@@ -32,6 +34,58 @@ export function CanvasArea() {
 
   const { pdfDocumentLoaded, scale } = state
   const zoomPct = `${Math.round(scale * 100)}%`
+
+  const isHighlight = state.editorMode === 'highlight'
+  const cursorDiameter = state.highlightStrokeWidthPdf * scale
+  const cursorColor = state.currentColor.hex
+
+  useEffect(() => {
+    const stack = canvasStackRef.current
+    const pdfCanvas = pdfCanvasRef.current
+    const cursor = highlightCursorRef.current
+    if (!stack || !pdfCanvas || !cursor) return
+    if (!isHighlight) {
+      cursor.style.display = 'none'
+      return
+    }
+    const onMove = (e: PointerEvent) => {
+      const stackRect = stack.getBoundingClientRect()
+      const pdfRect = pdfCanvas.getBoundingClientRect()
+      let x = e.clientX - stackRect.left
+      let y = e.clientY - stackRect.top
+      // Snap the virtual cursor onto the locked axis so it can't drift away from
+      // the actual drawn stroke while Ctrl is held.
+      const lock = axisLockRef.current
+      if (
+        lock &&
+        lock.axis !== null &&
+        pdfRect.width > 0 &&
+        pdfRect.height > 0 &&
+        pdfCanvas.width > 0 &&
+        pdfCanvas.height > 0
+      ) {
+        const ax = lock.anchor.x * scale
+        const ay = pdfCanvas.height - lock.anchor.y * scale
+        const cssAnchorX = ax * (pdfRect.width / pdfCanvas.width) + (pdfRect.left - stackRect.left)
+        const cssAnchorY = ay * (pdfRect.height / pdfCanvas.height) + (pdfRect.top - stackRect.top)
+        if (lock.axis === 'x') y = cssAnchorY
+        else x = cssAnchorX
+      }
+      const inside = x >= 0 && y >= 0 && x <= stackRect.width && y <= stackRect.height
+      cursor.style.display = inside ? 'block' : 'none'
+      cursor.style.transform = `translate(${x - cursorDiameter / 2}px, ${y - cursorDiameter / 2}px)`
+    }
+    const onLeave = () => {
+      cursor.style.display = 'none'
+    }
+    stack.addEventListener('pointermove', onMove)
+    stack.addEventListener('pointerleave', onLeave)
+    return () => {
+      stack.removeEventListener('pointermove', onMove)
+      stack.removeEventListener('pointerleave', onLeave)
+      cursor.style.display = 'none'
+    }
+  }, [canvasStackRef, pdfCanvasRef, axisLockRef, isHighlight, cursorDiameter, scale])
 
   useEffect(() => {
     const el = areaRef.current
@@ -109,7 +163,20 @@ export function CanvasArea() {
         <canvas
           ref={overlayCanvasRef}
           id="overlay-canvas"
-          className="absolute left-0 top-0 cursor-crosshair"
+          className={`absolute left-0 top-0 ${isHighlight ? 'cursor-none' : 'cursor-crosshair'}`}
+        />
+        <div
+          ref={highlightCursorRef}
+          id="highlight-cursor"
+          aria-hidden
+          className="pointer-events-none absolute left-0 top-0 z-20 hidden rounded-full border"
+          style={{
+            width: `${cursorDiameter}px`,
+            height: `${cursorDiameter}px`,
+            backgroundColor: cursorColor,
+            opacity: 0.4,
+            borderColor: 'rgba(0,0,0,0.6)',
+          }}
         />
         <input
           ref={inlineInputRef}

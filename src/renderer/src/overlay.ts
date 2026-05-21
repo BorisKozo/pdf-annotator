@@ -7,6 +7,7 @@ export type PenDrawPreview = {
   page: number
   strokeWidth: number
   hex: string
+  opacity?: number
   /** Single-stroke preview (normal pen). */
   points?: PdfPoint[]
   /** Multi-stroke preview while Shift is held: finished strokes plus `current`. */
@@ -53,9 +54,11 @@ function drawPenPolyline(
   points: PdfPoint[],
   strokeWidthPdf: number,
   hex: string,
+  opacity?: number,
 ): void {
   if (points.length < 2) return
   ctx.save()
+  if (opacity !== undefined) ctx.globalAlpha = opacity
   ctx.strokeStyle = hex
   ctx.lineWidth = Math.max(1, strokeWidthPdf * scale)
   ctx.lineCap = 'round'
@@ -85,7 +88,7 @@ export function drawAnnotationOverlay(
   for (const ann of list) {
     if (isPenAnnotation(ann)) {
       for (const seg of ann.segments) {
-        drawPenPolyline(ctx, canvasHeight, scale, seg, ann.strokeWidth, ann.hex)
+        drawPenPolyline(ctx, canvasHeight, scale, seg, ann.strokeWidth, ann.hex, ann.opacity)
       }
       if (ann.id === selectedId) {
         const b = penBoundsPdf(ann)
@@ -136,7 +139,15 @@ export function drawAnnotationOverlay(
   if (penPreview && penPreview.page === pageOneBased) {
     if (penPreview.segments !== undefined) {
       for (const seg of penPreview.segments) {
-        drawPenPolyline(ctx, canvasHeight, scale, seg, penPreview.strokeWidth, penPreview.hex)
+        drawPenPolyline(
+          ctx,
+          canvasHeight,
+          scale,
+          seg,
+          penPreview.strokeWidth,
+          penPreview.hex,
+          penPreview.opacity,
+        )
       }
       if (penPreview.current && penPreview.current.length >= 2) {
         drawPenPolyline(
@@ -146,6 +157,7 @@ export function drawAnnotationOverlay(
           penPreview.current,
           penPreview.strokeWidth,
           penPreview.hex,
+          penPreview.opacity,
         )
       }
     } else if (penPreview.points && penPreview.points.length >= 2) {
@@ -156,6 +168,7 @@ export function drawAnnotationOverlay(
         penPreview.points,
         penPreview.strokeWidth,
         penPreview.hex,
+        penPreview.opacity,
       )
     }
   }

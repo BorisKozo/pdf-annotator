@@ -25,10 +25,18 @@ import {
   type ParsedAnnotationsFile,
 } from '../lib/annotationJson'
 import { deleteAutosave, readAutosave, writeAutosave } from '../lib/autosaveStorage'
+import { readUiPrefs, writeUiPrefs } from '../lib/uiPrefsStorage'
 import type { ConfirmResult } from '../components/ConfirmDialog'
 import { hexIsNearWhite, inkColorFromHex } from '../lib/color'
 import { penHasDrawableSegments, penPointsFarEnough } from '../lib/penGeometry'
-import { editorReducer, initialEditorState, type EditorAction, type EditorState } from './editorState'
+import {
+  editorReducer,
+  initialEditorState,
+  isDrawingMode,
+  type EditorAction,
+  type EditorMode,
+  type EditorState,
+} from './editorState'
 import { getActivePenPreviewForOverlay } from './penPreview'
 import type { ActivePenStroke, ShiftPenCompose } from './penSession'
 
@@ -46,6 +54,8 @@ export type ConfirmSpec = {
   noLabel?: string
 }
 
+export type AxisLock = { anchor: PdfPoint; axis: 'x' | 'y' | null }
+
 export type EditorContextValue = {
   state: EditorState
   dispatch: React.Dispatch<EditorAction>
@@ -53,6 +63,8 @@ export type EditorContextValue = {
   overlayCanvasRef: RefObject<HTMLCanvasElement | null>
   inlineInputRef: RefObject<HTMLInputElement | null>
   canvasStackRef: RefObject<HTMLDivElement | null>
+  /** While Ctrl is held mid-stroke, motion is locked to one axis. Null otherwise. */
+  axisLockRef: RefObject<AxisLock | null>
   applyColor: (hex: string) => void
   syncColorUi: (hex: string) => void
   openPdfFlow: () => Promise<void>
@@ -62,7 +74,7 @@ export type EditorContextValue = {
   closePdfFlow: () => Promise<void>
   changePage: (delta: number) => Promise<void>
   setZoom: (next: number) => void
-  setEditorMode: (mode: 'text' | 'pen') => void
+  setEditorMode: (mode: EditorMode) => void
   selectAnnotationById: (id: number) => Promise<void>
   deleteAnnotationById: (id: number) => void
   toggleBold: () => void
@@ -97,6 +109,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
 
   const activePenStrokeRef = useRef<ActivePenStroke | null>(null)
   const shiftPenComposeRef = useRef<ShiftPenCompose | null>(null)
+  const axisLockRef = useRef<AxisLock | null>(null)
   const copiedAnnotationTemplateRef = useRef<Annotation | null>(null)
   const lastPointerPdfRef = useRef<PdfPoint | null>(null)
   const pendingAnnotationImportModeRef = useRef<'replace' | 'append'>('replace')
@@ -177,6 +190,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       page: cap.page,
       segments: segs,
       strokeWidth: cap.strokeWidth,
+      opacity: cap.opacity,
       r: cap.r,
       g: cap.g,
       b: cap.b,
@@ -201,6 +215,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       page: cap.page,
       segments: [[...pts]],
       strokeWidth: cap.strokeWidth,
+      opacity: cap.opacity,
       r: cap.r,
       g: cap.g,
       b: cap.b,
@@ -595,7 +610,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   )
 
   const setEditorMode = useCallback(
-    (mode: 'text' | 'pen') => {
+    (mode: EditorMode) => {
       if (stateRef.current.editorMode === mode) return
       finalizeShiftPenCompose()
       activePenStrokeRef.current = null
@@ -754,16 +769,19 @@ export function EditorProvider({ children }: { children: ReactNode }) {
 
     const onPointerDown = (e: PointerEvent) => {
       if (!getPdfJsDocument()) return
-      if (stateRef.current.editorMode !== 'pen') return
+      if (!isDrawingMode(stateRef.current.editorMode)) return
       if (e.button !== 0) return
       if (isFormFieldTarget(e.target)) return
       if (e.target !== pdfCanvas && e.target !== overlay) return
       e.preventDefault()
       stack.setPointerCapture(e.pointerId)
       const s = stateRef.current
-      const sw = s.penStrokeWidthPdf
+      const highlight = s.editorMode === 'highlight'
+      const sw = highlight ? s.highlightStrokeWidthPdf : s.penStrokeWidthPdf
+      const op = highlight ? 0.3 : undefined
       const p0 = pdfPointFromClient(e.clientX, e.clientY, s.scale)
       if (!p0) return
+      axisLockRef.current = null
       dispatch({ type: 'SELECT_ID', id: null })
 
       if (e.shiftKey) {
@@ -782,6 +800,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
             r: s.currentColor.r,
             g: s.currentColor.g,
             b: s.currentColor.b,
+            opacity: op,
           }
         } else {
           const cur = shiftPenComposeRef.current.current
@@ -802,13 +821,14 @@ export function EditorProvider({ children }: { children: ReactNode }) {
           r: s.currentColor.r,
           g: s.currentColor.g,
           b: s.currentColor.b,
+          opacity: op,
         }
       }
       redrawOverlayOnly()
     }
 
     const endPen = (e: PointerEvent) => {
-      if (stateRef.current.editorMode !== 'pen') return
+      if (!isDrawingMode(stateRef.current.editorMode)) return
       try {
         stack.releasePointerCapture(e.pointerId)
       } catch {
@@ -824,6 +844,32 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    /**
+     * Ctrl-axis lock: while Ctrl is held mid-stroke, constrain motion to one axis.
+     * Axis is decided on the first move after Ctrl is pressed (|dx| >= |dy| → horizontal).
+     * Cleared when Ctrl is released, so multiple straight + curved sections can mix.
+     */
+    const applyAxisLock = (raw: PdfPoint, lastDrawn: PdfPoint, ctrl: boolean): PdfPoint => {
+      if (!ctrl) {
+        axisLockRef.current = null
+        return raw
+      }
+      let lock = axisLockRef.current
+      if (!lock) {
+        lock = { anchor: lastDrawn, axis: null }
+        axisLockRef.current = lock
+      }
+      if (lock.axis === null) {
+        const dx = raw.x - lock.anchor.x
+        const dy = raw.y - lock.anchor.y
+        if (dx === 0 && dy === 0) return raw
+        lock.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y'
+      }
+      return lock.axis === 'x'
+        ? { x: raw.x, y: lock.anchor.y }
+        : { x: lock.anchor.x, y: raw.y }
+    }
+
     const onPointerMove = (e: PointerEvent) => {
       if (!getPdfJsDocument()) return
       const s = stateRef.current
@@ -837,35 +883,39 @@ export function EditorProvider({ children }: { children: ReactNode }) {
 
       const compose = shiftPenComposeRef.current
       if (
-        s.editorMode === 'pen' &&
+        isDrawingMode(s.editorMode) &&
         compose &&
         compose.page === s.currentPage &&
         compose.current.length > 0
       ) {
         e.preventDefault()
-        const p = pdfPointFromClient(e.clientX, e.clientY, s.scale)
-        if (!p) return
+        const raw = pdfPointFromClient(e.clientX, e.clientY, s.scale)
+        if (!raw) return
         const last = compose.current[compose.current.length - 1]!
+        const p = applyAxisLock(raw, last, e.ctrlKey)
         if (penPointsFarEnough(last, p)) compose.current.push(p)
         redrawOverlayOnly()
       } else if (
-        s.editorMode === 'pen' &&
+        isDrawingMode(s.editorMode) &&
         activePenStrokeRef.current &&
         activePenStrokeRef.current.page === s.currentPage
       ) {
         e.preventDefault()
-        const p = pdfPointFromClient(e.clientX, e.clientY, s.scale)
-        if (!p) return
+        const raw = pdfPointFromClient(e.clientX, e.clientY, s.scale)
+        if (!raw) return
         const pts = activePenStrokeRef.current.points
         const last = pts[pts.length - 1]!
+        const p = applyAxisLock(raw, last, e.ctrlKey)
         if (penPointsFarEnough(last, p)) pts.push(p)
         redrawOverlayOnly()
+      } else {
+        axisLockRef.current = null
       }
     }
 
     const onStackClick = (e: MouseEvent) => {
       if (!getPdfJsDocument()) return
-      if (stateRef.current.editorMode === 'pen') return
+      if (isDrawingMode(stateRef.current.editorMode)) return
       if (isFormFieldTarget(e.target)) return
       if (e.target !== pdfCanvas && e.target !== overlay) return
       const s = stateRef.current
@@ -1042,7 +1092,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   const bindShiftPenFinalize = useCallback(() => {
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.shiftKey) return
-      if (stateRef.current.editorMode !== 'pen') return
+      if (!isDrawingMode(stateRef.current.editorMode)) return
       finalizeShiftPenCompose()
     }
     window.addEventListener('keyup', onKeyUp)
@@ -1078,6 +1128,77 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   const setDragTarget = useCallback((on: boolean) => {
     document.body.classList.toggle('drag-target', on)
   }, [])
+
+  /** Load UI prefs once on startup. */
+  const uiPrefsLoadedRef = useRef(false)
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const prefs = await readUiPrefs()
+      if (cancelled) {
+        uiPrefsLoadedRef.current = true
+        return
+      }
+      if (prefs) {
+        const color =
+          typeof prefs.colorHex === 'string' ? inkColorFromHex(prefs.colorHex) : undefined
+        dispatch({
+          type: 'APPLY_UI_PREFS',
+          editorMode:
+            prefs.editorMode === 'text' ||
+            prefs.editorMode === 'pen' ||
+            prefs.editorMode === 'highlight'
+              ? prefs.editorMode
+              : undefined,
+          styleFontId: typeof prefs.styleFontId === 'string' ? prefs.styleFontId : undefined,
+          styleFontSize:
+            typeof prefs.styleFontSize === 'number' && Number.isFinite(prefs.styleFontSize)
+              ? prefs.styleFontSize
+              : undefined,
+          currentBold: typeof prefs.currentBold === 'boolean' ? prefs.currentBold : undefined,
+          penStrokeWidthPdf:
+            typeof prefs.penStrokeWidthPdf === 'number' && Number.isFinite(prefs.penStrokeWidthPdf)
+              ? prefs.penStrokeWidthPdf
+              : undefined,
+          highlightStrokeWidthPdf:
+            typeof prefs.highlightStrokeWidthPdf === 'number' &&
+            Number.isFinite(prefs.highlightStrokeWidthPdf)
+              ? prefs.highlightStrokeWidthPdf
+              : undefined,
+          currentColor: color,
+        })
+      }
+      uiPrefsLoadedRef.current = true
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /** Persist UI prefs whenever a tracked field changes (debounced ~400 ms). */
+  useEffect(() => {
+    if (!uiPrefsLoadedRef.current) return
+    const id = window.setTimeout(() => {
+      void writeUiPrefs({
+        editorMode: state.editorMode,
+        styleFontId: state.styleFontId,
+        styleFontSize: state.styleFontSize,
+        currentBold: state.currentBold,
+        penStrokeWidthPdf: state.penStrokeWidthPdf,
+        highlightStrokeWidthPdf: state.highlightStrokeWidthPdf,
+        colorHex: state.currentColor.hex,
+      })
+    }, 400)
+    return () => window.clearTimeout(id)
+  }, [
+    state.editorMode,
+    state.styleFontId,
+    state.styleFontSize,
+    state.currentBold,
+    state.penStrokeWidthPdf,
+    state.highlightStrokeWidthPdf,
+    state.currentColor.hex,
+  ])
 
   /** Autosave every 60 s while a PDF is open, skipping if the payload hasn't changed. */
   useEffect(() => {
@@ -1147,6 +1268,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     overlayCanvasRef,
     inlineInputRef,
     canvasStackRef,
+    axisLockRef,
     applyColor,
     syncColorUi,
     openPdfFlow,

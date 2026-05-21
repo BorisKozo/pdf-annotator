@@ -26,6 +26,7 @@ export function cloneAnnotationForClipboard(ann: Annotation): Annotation {
     page: ann.page,
     segments: ann.segments.map((seg) => seg.map((p) => ({ x: p.x, y: p.y }))),
     strokeWidth: ann.strokeWidth,
+    opacity: ann.opacity,
     r: ann.r,
     g: ann.g,
     b: ann.b,

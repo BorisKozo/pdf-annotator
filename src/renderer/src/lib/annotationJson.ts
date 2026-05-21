@@ -65,6 +65,10 @@ function parsePenAnnotation(raw: Record<string, unknown>): PenAnnotation {
     page: num(raw.page, 'page'),
     segments,
     strokeWidth: num(raw.strokeWidth, 'strokeWidth'),
+    opacity:
+      typeof raw.opacity === 'number' && Number.isFinite(raw.opacity)
+        ? Math.min(1, Math.max(0, raw.opacity))
+        : undefined,
     r: num(raw.r, 'r'),
     g: num(raw.g, 'g'),
     b: num(raw.b, 'b'),

@@ -1,13 +1,18 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readFile, writeFile, unlink } from 'node:fs/promises'
+import { readFile, writeFile, unlink, mkdir } from 'node:fs/promises'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const AUTOSAVE_FILENAME = 'pdf-editor-autosave.json'
 function autosavePath(): string {
   return path.join(app.getPath('temp'), AUTOSAVE_FILENAME)
+}
+
+const UI_PREFS_FILENAME = 'ui-prefs.json'
+function uiPrefsPath(): string {
+  return path.join(app.getPath('userData'), UI_PREFS_FILENAME)
 }
 
 function createWindow(): void {
@@ -143,6 +148,26 @@ ipcMain.handle('autosave:read', async (): Promise<{ text: string } | { text: nul
 ipcMain.handle('autosave:write', async (_event, jsonText: string): Promise<{ ok: boolean }> => {
   try {
     await writeFile(autosavePath(), jsonText, 'utf8')
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
+})
+
+ipcMain.handle('uiPrefs:read', async (): Promise<{ text: string | null }> => {
+  try {
+    const text = await readFile(uiPrefsPath(), 'utf8')
+    return { text }
+  } catch {
+    return { text: null }
+  }
+})
+
+ipcMain.handle('uiPrefs:write', async (_event, jsonText: string): Promise<{ ok: boolean }> => {
+  try {
+    const p = uiPrefsPath()
+    await mkdir(path.dirname(p), { recursive: true })
+    await writeFile(p, jsonText, 'utf8')
     return { ok: true }
   } catch {
     return { ok: false }

@@ -8,6 +8,7 @@ export type ActivePenStroke = {
   g: number
   b: number
   hex: string
+  opacity?: number
 }
 
 /** Shift held: multiple strokes committed together when Shift is released. */
@@ -20,4 +21,5 @@ export type ShiftPenCompose = {
   g: number
   b: number
   hex: string
+  opacity?: number
 }

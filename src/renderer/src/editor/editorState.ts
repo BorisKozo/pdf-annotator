@@ -2,7 +2,11 @@ import type { Annotation } from '../types'
 import { FONT_CATALOG } from '../fonts'
 import { inkColorFromHex, type InkColor, PALETTE } from '../lib/color'
 
-export type EditorMode = 'text' | 'pen'
+export type EditorMode = 'text' | 'pen' | 'highlight'
+
+export function isDrawingMode(mode: EditorMode): boolean {
+  return mode === 'pen' || mode === 'highlight'
+}
 
 export type EditorState = {
   pdfSourceBytes: ArrayBuffer | null
@@ -17,6 +21,7 @@ export type EditorState = {
   currentBold: boolean
   editorMode: EditorMode
   penStrokeWidthPdf: number
+  highlightStrokeWidthPdf: number
   /** Font/size for new text and for the sidebar when a text annotation is selected. */
   styleFontId: string
   styleFontSize: number
@@ -40,6 +45,7 @@ export const initialEditorState: EditorState = {
   currentBold: false,
   editorMode: 'text',
   penStrokeWidthPdf: 2,
+  highlightStrokeWidthPdf: 5,
   styleFontId: FONT_CATALOG[0]!.id,
   styleFontSize: 14,
   statusFileLabel: '—',
@@ -68,6 +74,7 @@ export type EditorAction =
   | { type: 'SET_BOLD'; bold: boolean }
   | { type: 'TOGGLE_BOLD_TO_SELECTION' }
   | { type: 'SET_PEN_WIDTH'; width: number }
+  | { type: 'SET_HIGHLIGHT_WIDTH'; width: number }
   | {
       type: 'LOAD_TEXT_STYLE_FROM_ANN'
       fontId: string
@@ -88,6 +95,16 @@ export type EditorAction =
   | { type: 'UPDATE_SELECTED_TEXT_BOLD' }
   | { type: 'PATCH_ANNOTATIONS'; updater: (list: Annotation[]) => Annotation[] }
   | { type: 'SET_LAST_AUTOSAVE'; at: number }
+  | {
+      type: 'APPLY_UI_PREFS'
+      editorMode?: EditorMode
+      styleFontId?: string
+      styleFontSize?: number
+      currentBold?: boolean
+      penStrokeWidthPdf?: number
+      highlightStrokeWidthPdf?: number
+      currentColor?: InkColor
+    }
   | { type: 'PDF_CLOSED' }
 
 function baseName(pathOrName: string): string {
@@ -106,9 +123,13 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         currentPage: 1,
         pdfDocumentLoaded: true,
         statusFileLabel: baseName(action.pathOrName),
-        currentColor: inkColorFromHex(PALETTE[0]!),
-        styleFontId: FONT_CATALOG[0]!.id,
-        styleFontSize: 14,
+        editorMode: state.editorMode,
+        styleFontId: state.styleFontId,
+        styleFontSize: state.styleFontSize,
+        currentBold: state.currentBold,
+        currentColor: state.currentColor,
+        penStrokeWidthPdf: state.penStrokeWidthPdf,
+        highlightStrokeWidthPdf: state.highlightStrokeWidthPdf,
       }
     }
     case 'SET_STATUS_FILE':
@@ -155,6 +176,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
     case 'SET_PEN_WIDTH':
       return { ...state, penStrokeWidthPdf: action.width }
+    case 'SET_HIGHLIGHT_WIDTH':
+      return { ...state, highlightStrokeWidthPdf: action.width }
     case 'LOAD_TEXT_STYLE_FROM_ANN':
       return {
         ...state,
@@ -282,8 +305,30 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return { ...state, annotations: action.updater(state.annotations) }
     case 'SET_LAST_AUTOSAVE':
       return { ...state, lastAutosaveAt: action.at }
+    case 'APPLY_UI_PREFS': {
+      const next = { ...state }
+      if (action.editorMode !== undefined) next.editorMode = action.editorMode
+      if (action.styleFontId !== undefined) next.styleFontId = action.styleFontId
+      if (action.styleFontSize !== undefined) next.styleFontSize = action.styleFontSize
+      if (action.currentBold !== undefined) next.currentBold = action.currentBold
+      if (action.penStrokeWidthPdf !== undefined)
+        next.penStrokeWidthPdf = action.penStrokeWidthPdf
+      if (action.highlightStrokeWidthPdf !== undefined)
+        next.highlightStrokeWidthPdf = action.highlightStrokeWidthPdf
+      if (action.currentColor !== undefined) next.currentColor = action.currentColor
+      return next
+    }
     case 'PDF_CLOSED':
-      return { ...initialEditorState }
+      return {
+        ...initialEditorState,
+        editorMode: state.editorMode,
+        styleFontId: state.styleFontId,
+        styleFontSize: state.styleFontSize,
+        currentBold: state.currentBold,
+        currentColor: state.currentColor,
+        penStrokeWidthPdf: state.penStrokeWidthPdf,
+        highlightStrokeWidthPdf: state.highlightStrokeWidthPdf,
+      }
     default:
       return state
   }
