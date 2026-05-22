@@ -1,7 +1,20 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readFile, writeFile, unlink, mkdir } from 'node:fs/promises'
+
+// Register before app.whenReady() — must happen at module load time.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'app',
+    privileges: {
+      secure: true,
+      standard: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+])
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -40,7 +53,7 @@ function createWindow(): void {
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    void mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
+    void mainWindow.loadURL('app://bundled/index.html')
   }
 }
 
@@ -208,7 +221,42 @@ ipcMain.handle('autosave:delete', async (): Promise<{ ok: boolean }> => {
   return { ok: true }
 })
 
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript',
+  '.mjs': 'application/javascript',
+  '.css': 'text/css',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.json': 'application/json',
+}
+
 app.whenReady().then(() => {
+  // Serve bundled renderer files via app:// so that fetch('/assets/...')
+  // and fetch('/fonts/...') work correctly in the packaged app.
+  // net.fetch() uses Chromium's stack and doesn't understand asar paths —
+  // use fs.readFile (patched by Electron) to read from the asar instead.
+  protocol.handle('app', async (req) => {
+    const { pathname } = new URL(req.url)
+    const rel = pathname.startsWith('/') ? pathname.slice(1) : pathname
+    const filePath = path.join(__dirname, '..', 'renderer', rel)
+    try {
+      const data = await readFile(filePath)
+      const ext = path.extname(filePath).toLowerCase()
+      const mime = MIME[ext] ?? 'application/octet-stream'
+      return new Response(data, { headers: { 'content-type': mime } })
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
+  })
+
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

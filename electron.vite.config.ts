@@ -25,6 +25,10 @@ export default defineConfig({
   },
   renderer: {
     plugins: [tailwindcss(), react()],
+    build: {
+      // Don't wipe the output directory — avoids EPERM when Windows locks assets
+      emptyOutDir: false,
+    },
     resolve: {
       alias: {
         '@renderer': resolve(projRoot, 'src/renderer/src'),

@@ -1,4 +1,24 @@
-import { PDFDocument, rgb, LineCapStyle, type PDFFont, type PDFPage, type StandardFonts } from 'pdf-lib'
+import {
+  PDFDocument,
+  PDFName,
+  PDFOperator,
+  rgb,
+  LineCapStyle,
+  LineJoinStyle,
+  pushGraphicsState,
+  popGraphicsState,
+  moveTo,
+  lineTo,
+  stroke,
+  setLineCap,
+  setLineJoin,
+  setLineWidth,
+  setStrokingRgbColor,
+  setGraphicsState,
+  type PDFFont,
+  type PDFPage,
+  type StandardFonts,
+} from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import type { Annotation } from './types'
 import { isTextAnnotation } from './types'
@@ -114,20 +134,48 @@ export async function buildAnnotatedPdfBytes(
     const color = rgb(ann.r, ann.g, ann.b)
 
     if (ann.kind === 'pen') {
-      const t = ann.strokeWidth
-      for (const seg of ann.segments) {
-        for (let i = 1; i < seg.length; i++) {
-          const a = seg[i - 1]!
-          const b = seg[i]!
-          page.drawLine({
-            start: { x: a.x, y: a.y },
-            end: { x: b.x, y: b.y },
-            thickness: t,
-            color,
-            opacity: ann.opacity,
-            lineCap: LineCapStyle.Round,
-          })
+      const opacity = ann.opacity ?? 1
+
+      if (opacity >= 1) {
+        // Opaque strokes: drawLine per segment is fine.
+        for (const seg of ann.segments) {
+          for (let i = 1; i < seg.length; i++) {
+            page.drawLine({
+              start: { x: seg[i - 1]!.x, y: seg[i - 1]!.y },
+              end: { x: seg[i]!.x, y: seg[i]!.y },
+              thickness: ann.strokeWidth,
+              color,
+              lineCap: LineCapStyle.Round,
+            })
+          }
         }
+      } else {
+        // Transparent strokes (e.g. highlights): draw ALL segments as one
+        // compound path and apply the opacity ExtGState a single time.
+        // Using drawLine() per segment causes opacity to compound wherever
+        // adjacent round caps overlap, producing uneven darkness at joints.
+        const gsDict = page.doc.context.obj({ Type: 'ExtGState', CA: opacity, ca: opacity })
+        const gsKey: PDFName = (page.node as any).newExtGState('GS', gsDict)
+
+        const ops: PDFOperator[] = [
+          pushGraphicsState(),
+          setGraphicsState(gsKey),
+          setLineCap(LineCapStyle.Round),
+          setLineJoin(LineJoinStyle.Round),
+          setLineWidth(ann.strokeWidth),
+          setStrokingRgbColor(ann.r, ann.g, ann.b),
+        ]
+
+        for (const seg of ann.segments) {
+          if (seg.length === 0) continue
+          ops.push(moveTo(seg[0]!.x, seg[0]!.y))
+          for (let i = 1; i < seg.length; i++) {
+            ops.push(lineTo(seg[i]!.x, seg[i]!.y))
+          }
+        }
+
+        ops.push(stroke(), popGraphicsState())
+        page.pushOperators(...ops)
       }
       continue
     }
