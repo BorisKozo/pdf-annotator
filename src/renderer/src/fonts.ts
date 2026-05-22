@@ -1,13 +1,19 @@
 import boldHebrewWoff2Url from '@fontsource/noto-sans-hebrew/files/noto-sans-hebrew-hebrew-700-normal.woff2?url'
 import boldLatinWoff2Url from '@fontsource/noto-sans-hebrew/files/noto-sans-hebrew-latin-700-normal.woff2?url'
+import { StandardFonts } from 'pdf-lib'
 
 /** Fonts bundled for canvas preview + pdf-lib embed (same file). */
 export interface FontEntry {
   id: string
   label: string
   cssFamily: string
-  /** Served from Vite public/ → absolute path in app */
-  publicPath: string
+  /** Served from Vite public/ → absolute path in app. Required for embedded fonts. */
+  publicPath?: string
+  /** When set, exporter uses pdf-lib's built-in standard font instead of embedding bytes.
+   *  Standard fonts are WinAnsi only — they don't support Hebrew. */
+  standardFont?: StandardFonts
+  /** Bold variant of the standard font; used when annotation.bold is true. */
+  standardFontBold?: StandardFonts
 }
 
 export const FONT_CATALOG: FontEntry[] = [
@@ -18,6 +24,27 @@ export const FONT_CATALOG: FontEntry[] = [
     // Full family VF from Google Fonts (Hebrew + Latin). The small "Regular"
     // subset TTF is Hebrew-only — Latin names render as squares in saved PDFs.
     publicPath: '/fonts/NotoSansHebrew-VF.ttf',
+  },
+  {
+    id: 'helvetica',
+    label: 'Helvetica (English)',
+    cssFamily: 'Helvetica, Arial, sans-serif',
+    standardFont: StandardFonts.Helvetica,
+    standardFontBold: StandardFonts.HelveticaBold,
+  },
+  {
+    id: 'times-roman',
+    label: 'Times Roman (English)',
+    cssFamily: '"Times New Roman", Times, serif',
+    standardFont: StandardFonts.TimesRoman,
+    standardFontBold: StandardFonts.TimesRomanBold,
+  },
+  {
+    id: 'courier',
+    label: 'Courier (English)',
+    cssFamily: '"Courier New", Courier, monospace',
+    standardFont: StandardFonts.Courier,
+    standardFontBold: StandardFonts.CourierBold,
   },
 ]
 
@@ -38,7 +65,11 @@ export async function getFontBytesForExport(fontKey: string): Promise<ArrayBuffe
   if (fontKey === PDF_EMBED_BOLD_HEBREW) pathOrUrl = boldHebrewWoff2Url
   else if (fontKey === PDF_EMBED_BOLD_LATIN) pathOrUrl = boldLatinWoff2Url
   else {
-    pathOrUrl = getFontEntry(fontKey).publicPath
+    const entry = getFontEntry(fontKey)
+    if (!entry.publicPath) {
+      throw new Error(`Font ${fontKey} has no bytes to load (standard font)`)
+    }
+    pathOrUrl = entry.publicPath
   }
   const res = await fetch(pathOrUrl)
   if (!res.ok) {

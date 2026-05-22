@@ -26,6 +26,10 @@ declare global {
       readAutosave: () => Promise<{ text: string | null }>
       writeAutosave: (jsonText: string) => Promise<{ ok: boolean }>
       deleteAutosave: () => Promise<{ ok: boolean }>
+      readUiPrefs: () => Promise<{ text: string | null }>
+      writeUiPrefs: (jsonText: string) => Promise<{ ok: boolean }>
+      readFavorites: () => Promise<{ text: string | null }>
+      writeFavorites: (jsonText: string) => Promise<{ ok: boolean }>
       getPathForFile: (file: File) => string
     }
   }
