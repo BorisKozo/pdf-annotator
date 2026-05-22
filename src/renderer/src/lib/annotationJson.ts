@@ -38,6 +38,7 @@ function parseTextAnnotation(raw: Record<string, unknown>): TextAnnotation {
     kind: 'text',
     id: num(raw.id, 'id'),
     page: num(raw.page, 'page'),
+    name: typeof raw.name === 'string' && raw.name.length > 0 ? raw.name : undefined,
     x: num(raw.x, 'x'),
     y: num(raw.y, 'y'),
     text: str(raw.text, 'text'),
@@ -63,6 +64,7 @@ function parsePenAnnotation(raw: Record<string, unknown>): PenAnnotation {
     kind: 'pen',
     id: num(raw.id, 'id'),
     page: num(raw.page, 'page'),
+    name: typeof raw.name === 'string' && raw.name.length > 0 ? raw.name : undefined,
     segments,
     strokeWidth: num(raw.strokeWidth, 'strokeWidth'),
     opacity:

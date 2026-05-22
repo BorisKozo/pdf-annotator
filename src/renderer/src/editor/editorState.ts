@@ -1,8 +1,8 @@
-import type { Annotation } from '../types'
+import type { Annotation, Favorite } from '../types'
 import { FONT_CATALOG } from '../fonts'
 import { inkColorFromHex, type InkColor, PALETTE } from '../lib/color'
 
-export type EditorMode = 'text' | 'pen' | 'highlight'
+export type EditorMode = 'text' | 'pen' | 'highlight' | 'favorites'
 
 export function isDrawingMode(mode: EditorMode): boolean {
   return mode === 'pen' || mode === 'highlight'
@@ -30,6 +30,11 @@ export type EditorState = {
   pdfDocumentLoaded: boolean
   /** Epoch ms of the last successful autosave in this session, or null. */
   lastAutosaveAt: number | null
+  /** Persistent favorite annotation templates. */
+  favorites: Favorite[]
+  nextFavoriteId: number
+  /** When set, the next click on the document inserts this favorite centered there. */
+  pendingFavoritePasteId: number | null
 }
 
 export const initialEditorState: EditorState = {
@@ -52,6 +57,9 @@ export const initialEditorState: EditorState = {
   coordsLabel: '—',
   pdfDocumentLoaded: false,
   lastAutosaveAt: null,
+  favorites: [],
+  nextFavoriteId: 1,
+  pendingFavoritePasteId: null,
 }
 
 export type EditorAction =
@@ -87,6 +95,7 @@ export type EditorAction =
   | { type: 'SYNC_FROM_PEN_ANN'; color: InkColor; strokeWidth: number }
   | { type: 'SELECT_ID'; id: number | null }
   | { type: 'DELETE_ANNOTATION'; id: number }
+  | { type: 'RENAME_ANNOTATION'; id: number; name: string }
   | { type: 'ADD_ANNOTATION'; ann: Annotation }
   | { type: 'REPLACE_ANNOTATIONS'; annotations: Annotation[] }
   /** Remap ids inside reducer; does not link to a specific PDF. */
@@ -95,6 +104,12 @@ export type EditorAction =
   | { type: 'UPDATE_SELECTED_TEXT_BOLD' }
   | { type: 'PATCH_ANNOTATIONS'; updater: (list: Annotation[]) => Annotation[] }
   | { type: 'SET_LAST_AUTOSAVE'; at: number }
+  | { type: 'LOAD_FAVORITES'; favorites: Favorite[] }
+  | { type: 'ADD_FAVORITE'; ann: Annotation }
+  | { type: 'RENAME_FAVORITE'; id: number; name: string }
+  | { type: 'DELETE_FAVORITE'; id: number }
+  | { type: 'ARM_FAVORITE_PASTE'; id: number }
+  | { type: 'CLEAR_FAVORITE_PASTE' }
   | {
       type: 'APPLY_UI_PREFS'
       editorMode?: EditorMode
@@ -130,6 +145,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         currentColor: state.currentColor,
         penStrokeWidthPdf: state.penStrokeWidthPdf,
         highlightStrokeWidthPdf: state.highlightStrokeWidthPdf,
+        favorites: state.favorites,
+        nextFavoriteId: state.nextFavoriteId,
       }
     }
     case 'SET_STATUS_FILE':
@@ -244,6 +261,14 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       }
       return { ...state, annotations }
     }
+    case 'RENAME_ANNOTATION': {
+      const trimmed = action.name.trim()
+      const name = trimmed.length > 0 ? trimmed : undefined
+      return {
+        ...state,
+        annotations: state.annotations.map((a) => (a.id === action.id ? { ...a, name } : a)),
+      }
+    }
     case 'ADD_ANNOTATION':
       return {
         ...state,
@@ -305,6 +330,41 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return { ...state, annotations: action.updater(state.annotations) }
     case 'SET_LAST_AUTOSAVE':
       return { ...state, lastAutosaveAt: action.at }
+    case 'LOAD_FAVORITES': {
+      const maxId = action.favorites.reduce((m, f) => Math.max(m, f.id), 0)
+      return { ...state, favorites: action.favorites, nextFavoriteId: maxId + 1 }
+    }
+    case 'ADD_FAVORITE': {
+      // Strip id/page so the template doesn't carry stale identity.
+      const template: Annotation =
+        action.ann.kind === 'text'
+          ? { ...action.ann, id: 0, page: 1 }
+          : { ...action.ann, id: 0, page: 1 }
+      const fav: Favorite = { id: state.nextFavoriteId, ann: template }
+      return {
+        ...state,
+        favorites: [...state.favorites, fav],
+        nextFavoriteId: state.nextFavoriteId + 1,
+      }
+    }
+    case 'RENAME_FAVORITE': {
+      const trimmed = action.name.trim()
+      const name = trimmed.length > 0 ? trimmed : undefined
+      return {
+        ...state,
+        favorites: state.favorites.map((f) => (f.id === action.id ? { ...f, name } : f)),
+      }
+    }
+    case 'DELETE_FAVORITE': {
+      const next = state.favorites.filter((f) => f.id !== action.id)
+      const pending =
+        state.pendingFavoritePasteId === action.id ? null : state.pendingFavoritePasteId
+      return { ...state, favorites: next, pendingFavoritePasteId: pending }
+    }
+    case 'ARM_FAVORITE_PASTE':
+      return { ...state, pendingFavoritePasteId: action.id }
+    case 'CLEAR_FAVORITE_PASTE':
+      return { ...state, pendingFavoritePasteId: null }
     case 'APPLY_UI_PREFS': {
       const next = { ...state }
       if (action.editorMode !== undefined) next.editorMode = action.editorMode
@@ -328,6 +388,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         currentColor: state.currentColor,
         penStrokeWidthPdf: state.penStrokeWidthPdf,
         highlightStrokeWidthPdf: state.highlightStrokeWidthPdf,
+        favorites: state.favorites,
+        nextFavoriteId: state.nextFavoriteId,
       }
     default:
       return state

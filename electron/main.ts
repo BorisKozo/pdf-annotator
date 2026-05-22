@@ -15,6 +15,11 @@ function uiPrefsPath(): string {
   return path.join(app.getPath('userData'), UI_PREFS_FILENAME)
 }
 
+const FAVORITES_FILENAME = 'favorites.json'
+function favoritesPath(): string {
+  return path.join(app.getPath('userData'), FAVORITES_FILENAME)
+}
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -166,6 +171,26 @@ ipcMain.handle('uiPrefs:read', async (): Promise<{ text: string | null }> => {
 ipcMain.handle('uiPrefs:write', async (_event, jsonText: string): Promise<{ ok: boolean }> => {
   try {
     const p = uiPrefsPath()
+    await mkdir(path.dirname(p), { recursive: true })
+    await writeFile(p, jsonText, 'utf8')
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
+})
+
+ipcMain.handle('favorites:read', async (): Promise<{ text: string | null }> => {
+  try {
+    const text = await readFile(favoritesPath(), 'utf8')
+    return { text }
+  } catch {
+    return { text: null }
+  }
+})
+
+ipcMain.handle('favorites:write', async (_event, jsonText: string): Promise<{ ok: boolean }> => {
+  try {
+    const p = favoritesPath()
     await mkdir(path.dirname(p), { recursive: true })
     await writeFile(p, jsonText, 'utf8')
     return { ok: true }

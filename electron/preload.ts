@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readUiPrefs: (): Promise<{ text: string | null }> => ipcRenderer.invoke('uiPrefs:read'),
   writeUiPrefs: (jsonText: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('uiPrefs:write', jsonText),
+  readFavorites: (): Promise<{ text: string | null }> => ipcRenderer.invoke('favorites:read'),
+  writeFavorites: (jsonText: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('favorites:write', jsonText),
   /** Full absolute path for a File from drag-drop or <input type=file>. Empty when unavailable. */
   getPathForFile: (file: File): string => {
     try {

@@ -17,7 +17,12 @@ import { drawAnnotationOverlay, findAnnotationAtCanvasPoint } from '../overlay'
 import { closePdf, openPdfFromBuffer, renderPdfPage, getPdfJsDocument } from '../pdfSession'
 import type { Annotation, PdfPoint } from '../types'
 import { isPenAnnotation, isTextAnnotation } from '../types'
-import { annotationPastedAtTopLeft, cloneAnnotationForClipboard } from '../lib/clipboardAnnotation'
+import {
+  annotationPastedAtTopLeft,
+  annotationPastedCenteredAt,
+  cloneAnnotationForClipboard,
+} from '../lib/clipboardAnnotation'
+import { readFavorites, writeFavorites } from '../lib/favoritesStorage'
 import {
   parseAnnotationsFile,
   pdfPathsMatch,
@@ -614,6 +619,9 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       if (stateRef.current.editorMode === mode) return
       finalizeShiftPenCompose()
       activePenStrokeRef.current = null
+      if (stateRef.current.pendingFavoritePasteId !== null) {
+        dispatch({ type: 'CLEAR_FAVORITE_PASTE' })
+      }
       dispatch({ type: 'SET_MODE', mode })
     },
     [finalizeShiftPenCompose],
@@ -926,6 +934,29 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       }
       const bm = bitmapFromClient(e.clientX, e.clientY)
       if (!bm) return
+
+      // If a favorite is armed, paste it centered at the click and consume the click.
+      if (s.pendingFavoritePasteId !== null) {
+        const fav = s.favorites.find((f) => f.id === s.pendingFavoritePasteId)
+        if (fav) {
+          const pdfX = bm.px / s.scale
+          const pdfY = (bm.bh - bm.py) / s.scale
+          const ann = annotationPastedCenteredAt(
+            fav.ann,
+            s.currentPage,
+            { x: pdfX, y: pdfY },
+            overlay,
+            s.scale,
+          )
+          ann.id = s.nextAnnId
+          dispatch({ type: 'ADD_ANNOTATION', ann })
+        }
+        dispatch({ type: 'CLEAR_FAVORITE_PASTE' })
+        return
+      }
+
+      if (s.editorMode === 'favorites') return
+
       const ctx = overlay.getContext('2d')
       if (!ctx) return
       const hit = findAnnotationAtCanvasPoint(
@@ -1147,7 +1178,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
           editorMode:
             prefs.editorMode === 'text' ||
             prefs.editorMode === 'pen' ||
-            prefs.editorMode === 'highlight'
+            prefs.editorMode === 'highlight' ||
+            prefs.editorMode === 'favorites'
               ? prefs.editorMode
               : undefined,
           styleFontId: typeof prefs.styleFontId === 'string' ? prefs.styleFontId : undefined,
@@ -1199,6 +1231,35 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     state.highlightStrokeWidthPdf,
     state.currentColor.hex,
   ])
+
+  /** Load favorites once on startup. */
+  const favoritesLoadedRef = useRef(false)
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const favs = await readFavorites()
+      if (cancelled) {
+        favoritesLoadedRef.current = true
+        return
+      }
+      if (favs && favs.length > 0) {
+        dispatch({ type: 'LOAD_FAVORITES', favorites: favs })
+      }
+      favoritesLoadedRef.current = true
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /** Persist favorites whenever they change (debounced ~400 ms). */
+  useEffect(() => {
+    if (!favoritesLoadedRef.current) return
+    const id = window.setTimeout(() => {
+      void writeFavorites(state.favorites)
+    }, 400)
+    return () => window.clearTimeout(id)
+  }, [state.favorites])
 
   /** Autosave every 60 s while a PDF is open, skipping if the payload hasn't changed. */
   useEffect(() => {

@@ -8,6 +8,8 @@ export interface TextAnnotation {
   kind: 'text'
   id: number
   page: number
+  /** Optional user-provided display name for the annotations list. */
+  name?: string
   x: number
   y: number
   text: string
@@ -25,6 +27,8 @@ export interface PenAnnotation {
   kind: 'pen'
   id: number
   page: number
+  /** Optional user-provided display name for the annotations list. */
+  name?: string
   /** Each sub-array is one pen stroke (PDF pt). Disjoint segments are not connected. */
   segments: PdfPoint[][]
   /** Stroke width in PDF points. */
@@ -45,4 +49,12 @@ export function isTextAnnotation(a: Annotation): a is TextAnnotation {
 
 export function isPenAnnotation(a: Annotation): a is PenAnnotation {
   return a.kind === 'pen'
+}
+
+/** Persisted favorite annotation template. `ann` has `id`/`page` placeholders. */
+export interface Favorite {
+  id: number
+  /** Optional display name; falls back to the inner annotation's label. */
+  name?: string
+  ann: Annotation
 }
