@@ -2,7 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import { annotationsSortedLikeList } from '../lib/annotationSort'
 import { escapeAttr, escapeHtml } from '../lib/htmlEscape'
 import { useEditor } from '../editor/EditorContext'
-import { isTextAnnotation } from '../types'
+import { isTextAnnotation, type Annotation } from '../types'
+
+/** Plain-text default name used to seed the rename input. Mirrors the row label,
+ *  minus the `pX:` page prefix (the renderer adds that back when displaying). */
+function defaultEditableName(ann: Annotation): string {
+  if (isTextAnnotation(ann)) return `Text · ${ann.text}`
+  const kind = ann.opacity !== undefined && ann.opacity < 1 ? 'Highlight' : 'Pen'
+  return `${kind} · ${ann.segments.length} line(s)`
+}
 
 export function AnnotationsPanel() {
   const { state, dispatch, selectAnnotationById, deleteAnnotationById } = useEditor()
@@ -12,17 +20,37 @@ export function AnnotationsPanel() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const [glowingIds, setGlowingIds] = useState<Set<number>>(() => new Set())
+
+  const flashFavoriteGlow = (id: number) => {
+    setGlowingIds((s) => {
+      const next = new Set(s)
+      next.add(id)
+      return next
+    })
+    window.setTimeout(() => {
+      setGlowingIds((s) => {
+        if (!s.has(id)) return s
+        const next = new Set(s)
+        next.delete(id)
+        return next
+      })
+    }, 1000)
+  }
 
   useEffect(() => {
     if (editingId !== null) {
-      inputRef.current?.focus()
-      inputRef.current?.select()
+      const el = inputRef.current
+      if (!el) return
+      el.focus()
+      // setSelectionRange is more reliable than .select() right after focus.
+      el.setSelectionRange(0, el.value.length)
     }
   }, [editingId])
 
-  const startEdit = (id: number, currentName: string) => {
-    setEditingId(id)
-    setEditingText(currentName)
+  const startEdit = (ann: Annotation) => {
+    setEditingId(ann.id)
+    setEditingText(ann.name && ann.name.length > 0 ? ann.name : defaultEditableName(ann))
   }
 
   const commitEdit = () => {
@@ -45,15 +73,19 @@ export function AnnotationsPanel() {
           <div className="p-2.5 text-center text-xs text-[var(--muted)]">No annotations yet</div>
         ) : (
           sorted.map((ann) => {
+            const penKindLabel =
+              !isTextAnnotation(ann) && ann.opacity !== undefined && ann.opacity < 1
+                ? 'Highlight'
+                : 'Pen'
             const defaultLabel = isTextAnnotation(ann)
               ? `${ann.bold === true ? '<span style="opacity:.85">B</span> ' : ''}p${ann.page}: Text · ${escapeHtml(ann.text)}`
-              : `p${ann.page}: Pen · ${ann.segments.length} line(s) · ${ann.segments.reduce((n, s) => n + s.length, 0)} pts`
+              : `p${ann.page}: ${penKindLabel} · ${ann.segments.length} line(s) · ${ann.segments.reduce((n, s) => n + s.length, 0)} pts`
             const label = ann.name ? `p${ann.page}: ${escapeHtml(ann.name)}` : defaultLabel
             const title = ann.name
               ? `${ann.name}`
               : isTextAnnotation(ann)
                 ? `Text: ${escapeAttr(ann.text)}`
-                : `Pen (${ann.segments.length} line(s))`
+                : `${penKindLabel} (${ann.segments.length} line(s))`
             const isEditing = editingId === ann.id
             return (
               <div
@@ -122,7 +154,7 @@ export function AnnotationsPanel() {
                     aria-label="Rename annotation"
                     onClick={(ev) => {
                       ev.stopPropagation()
-                      startEdit(ann.id, ann.name ?? '')
+                      startEdit(ann)
                     }}
                   >
                     <svg
@@ -140,43 +172,54 @@ export function AnnotationsPanel() {
                     </svg>
                   </button>
                 )}
+                {!isEditing && (() => {
+                  const glowing = glowingIds.has(ann.id)
+                  return (
+                    <button
+                      type="button"
+                      className={
+                        'ann-fav cursor-pointer border-none bg-transparent px-1.5 py-0.5 transition-all duration-700 ease-out hover:text-[#fbbf24] ' +
+                        (glowing
+                          ? 'text-[#fbbf24] opacity-100 [filter:drop-shadow(0_0_6px_#fbbf24)]'
+                          : 'text-[var(--muted)] opacity-0 group-hover:opacity-100')
+                      }
+                      title="Add to favorites"
+                      aria-label="Add to favorites"
+                      onClick={(ev) => {
+                        ev.stopPropagation()
+                        dispatch({ type: 'ADD_FAVORITE', ann })
+                        flashFavoriteGlow(ann.id)
+                      }}
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="12"
+                        height="12"
+                        fill={glowing ? '#fbbf24' : 'none'}
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polygon points="12 2 15 8.5 22 9.3 17 14.1 18.2 21 12 17.8 5.8 21 7 14.1 2 9.3 9 8.5 12 2" />
+                      </svg>
+                    </button>
+                  )
+                })()}
                 {!isEditing && (
                   <button
                     type="button"
-                    className="ann-fav cursor-pointer border-none bg-transparent px-1.5 py-0.5 text-[var(--muted)] opacity-0 hover:text-[#fbbf24] group-hover:opacity-100"
-                    title="Add to favorites"
-                    aria-label="Add to favorites"
+                    className="ann-del cursor-pointer border-none bg-transparent px-1.5 py-0.5 text-[var(--muted)] opacity-0 hover:text-[#f87171] group-hover:opacity-100"
+                    data-id={ann.id}
+                    title="Delete"
                     onClick={(ev) => {
                       ev.stopPropagation()
-                      dispatch({ type: 'ADD_FAVORITE', ann })
+                      deleteAnnotationById(ann.id)
                     }}
                   >
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="12"
-                      height="12"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polygon points="12 2 15 8.5 22 9.3 17 14.1 18.2 21 12 17.8 5.8 21 7 14.1 2 9.3 9 8.5 12 2" />
-                    </svg>
+                    ✕
                   </button>
                 )}
-                <button
-                  type="button"
-                  className="ann-del cursor-pointer border-none bg-transparent px-1.5 py-0.5 text-[var(--muted)] opacity-0 hover:text-[#f87171] group-hover:opacity-100"
-                  data-id={ann.id}
-                  title="Delete"
-                  onClick={(ev) => {
-                    ev.stopPropagation()
-                    deleteAnnotationById(ann.id)
-                  }}
-                >
-                  ✕
-                </button>
               </div>
             )
           })

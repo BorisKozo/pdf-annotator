@@ -949,6 +949,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
             s.scale,
           )
           ann.id = s.nextAnnId
+          if (fav.name && fav.name.length > 0) ann.name = fav.name
           dispatch({ type: 'ADD_ANNOTATION', ann })
         }
         dispatch({ type: 'CLEAR_FAVORITE_PASTE' })

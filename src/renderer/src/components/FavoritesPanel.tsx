@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { escapeHtml } from '../lib/htmlEscape'
 import { useEditor } from '../editor/EditorContext'
-import { isTextAnnotation } from '../types'
+import { isTextAnnotation, type Favorite } from '../types'
+
+function defaultEditableName(fav: Favorite): string {
+  const ann = fav.ann
+  if (isTextAnnotation(ann)) return `Text · ${ann.text}`
+  const kind = ann.opacity !== undefined && ann.opacity < 1 ? 'Highlight' : 'Pen'
+  return `${kind} · ${ann.segments.length} line(s)`
+}
 
 export function FavoritesPanel() {
   const { state, dispatch } = useEditor()
@@ -13,14 +20,16 @@ export function FavoritesPanel() {
 
   useEffect(() => {
     if (editingId !== null) {
-      inputRef.current?.focus()
-      inputRef.current?.select()
+      const el = inputRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(0, el.value.length)
     }
   }, [editingId])
 
-  const startEdit = (id: number, currentName: string) => {
-    setEditingId(id)
-    setEditingText(currentName)
+  const startEdit = (fav: Favorite) => {
+    setEditingId(fav.id)
+    setEditingText(fav.name && fav.name.length > 0 ? fav.name : defaultEditableName(fav))
   }
 
   const commitEdit = () => {
@@ -58,9 +67,13 @@ export function FavoritesPanel() {
         ) : (
           favorites.map((fav) => {
             const ann = fav.ann
+            const penKindLabel =
+              !isTextAnnotation(ann) && ann.opacity !== undefined && ann.opacity < 1
+                ? 'Highlight'
+                : 'Pen'
             const defaultLabel = isTextAnnotation(ann)
               ? `Text · ${escapeHtml(ann.text)}`
-              : `Pen · ${ann.segments.length} line(s)`
+              : `${penKindLabel} · ${ann.segments.length} line(s)`
             const label = fav.name ? escapeHtml(fav.name) : defaultLabel
             const armed = pendingFavoritePasteId === fav.id
             const isEditing = editingId === fav.id
@@ -120,7 +133,7 @@ export function FavoritesPanel() {
                       className="cursor-pointer border-none bg-transparent px-1.5 py-0.5 text-[var(--muted)] opacity-0 hover:text-[var(--accent-hover)] group-hover:opacity-100"
                       title="Rename"
                       aria-label="Rename favorite"
-                      onClick={() => startEdit(fav.id, fav.name ?? '')}
+                      onClick={() => startEdit(fav)}
                     >
                       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M12 20h9" />
