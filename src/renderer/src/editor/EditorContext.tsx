@@ -1006,6 +1006,14 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       if (!getPdfJsDocument()) return
       if (isFormFieldTarget(e.target)) return
 
+      if (e.code === 'Escape') {
+        if (stateRef.current.selectedId !== null) {
+          e.preventDefault()
+          dispatch({ type: 'SELECT_ID', id: null })
+        }
+        return
+      }
+
       if (e.code === 'Delete') {
         const sid = stateRef.current.selectedId
         if (sid === null) return

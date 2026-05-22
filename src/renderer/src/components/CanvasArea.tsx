@@ -4,6 +4,7 @@ import { useEditor } from '../editor/EditorContext'
 export function CanvasArea() {
   const {
     state,
+    dispatch,
     pdfCanvasRef,
     overlayCanvasRef,
     inlineInputRef,
@@ -105,6 +106,13 @@ export function CanvasArea() {
       ref={areaRef}
       className="canvas-area relative flex-1 overflow-auto bg-[var(--bg)] p-7"
       id="canvas-area"
+      onClick={(e) => {
+        // Deselect when clicking the background area around the PDF,
+        // but not when the click landed on the canvas or any other child.
+        if (e.target !== e.currentTarget) return
+        if (state.selectedId === null) return
+        dispatch({ type: 'SELECT_ID', id: null })
+      }}
       onDragEnter={(e) => {
         e.preventDefault()
         setDragTarget(true)

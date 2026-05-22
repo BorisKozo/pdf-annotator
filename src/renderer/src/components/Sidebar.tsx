@@ -18,8 +18,9 @@ export function Sidebar() {
       <ModeToggle />
       <TextStyleForm />
       <PenStyleForm />
-      <ColorPalette />
-      {showFavorites ? <FavoritesPanel /> : <AnnotationsPanel />}
+      {!showFavorites && <ColorPalette />}
+      {showFavorites && <FavoritesPanel />}
+      <AnnotationsPanel />
     </aside>
   )
 }
