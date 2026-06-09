@@ -1,10 +1,13 @@
-/** First strong character determines paragraph direction for placement hints. */
+/**
+ * Returns 'rtl' if the text contains any strongly-RTL character (Hebrew, Arabic),
+ * otherwise 'ltr'. Digits are weak directional characters and do not trigger LTR
+ * even when they appear before Hebrew — "420 ש\"ח" is RTL, not LTR.
+ */
 export function getTextDirection(text: string): 'ltr' | 'rtl' {
   for (const c of text) {
     const cp = c.codePointAt(0)
     if (cp === undefined) continue
     if (isStrongRtl(cp)) return 'rtl'
-    if (isStrongLtr(cp)) return 'ltr'
   }
   return 'ltr'
 }
@@ -16,12 +19,5 @@ function isStrongRtl(cp: number): boolean {
   if (cp >= 0x08a0 && cp <= 0x08ff) return true
   if (cp >= 0xfb1d && cp <= 0xfdff) return true
   if (cp >= 0xfe70 && cp <= 0xfeff) return true
-  return false
-}
-
-function isStrongLtr(cp: number): boolean {
-  if (cp >= 0x41 && cp <= 0x5a) return true
-  if (cp >= 0x61 && cp <= 0x7a) return true
-  if (cp >= 0x30 && cp <= 0x39) return true
   return false
 }
