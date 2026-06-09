@@ -26,6 +26,7 @@ export type EditorState = {
   styleFontId: string
   styleFontSize: number
   statusFileLabel: string
+  statusAnnotationsLabel: string
   coordsLabel: string
   pdfDocumentLoaded: boolean
   /** Epoch ms of the last successful autosave in this session, or null. */
@@ -54,6 +55,7 @@ export const initialEditorState: EditorState = {
   styleFontId: FONT_CATALOG[0]!.id,
   styleFontSize: 14,
   statusFileLabel: '—',
+  statusAnnotationsLabel: '—',
   coordsLabel: '—',
   pdfDocumentLoaded: false,
   lastAutosaveAt: null,
@@ -70,6 +72,7 @@ export type EditorAction =
       totalPages: number
     }
   | { type: 'SET_STATUS_FILE'; label: string }
+  | { type: 'SET_STATUS_ANNOTATIONS'; label: string }
   | { type: 'SET_COORDS'; label: string }
   /** Toolbar prev/next: clears selection. */
   | { type: 'SET_PAGE_NAV'; page: number }
@@ -103,6 +106,7 @@ export type EditorAction =
   | { type: 'UPDATE_SELECTED_TEXT_STYLE'; fontId: string; size: number }
   | { type: 'UPDATE_SELECTED_TEXT_BOLD' }
   | { type: 'PATCH_ANNOTATIONS'; updater: (list: Annotation[]) => Annotation[] }
+  | { type: 'UPDATE_ANNOTATION_TEXT'; id: number; text: string }
   | { type: 'SET_LAST_AUTOSAVE'; at: number }
   | { type: 'LOAD_FAVORITES'; favorites: Favorite[] }
   | { type: 'ADD_FAVORITE'; ann: Annotation }
@@ -138,6 +142,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         currentPage: 1,
         pdfDocumentLoaded: true,
         statusFileLabel: baseName(action.pathOrName),
+        statusAnnotationsLabel: '—',
         editorMode: state.editorMode,
         styleFontId: state.styleFontId,
         styleFontSize: state.styleFontSize,
@@ -151,6 +156,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
     case 'SET_STATUS_FILE':
       return { ...state, statusFileLabel: action.label }
+    case 'SET_STATUS_ANNOTATIONS':
+      return { ...state, statusAnnotationsLabel: action.label }
     case 'SET_COORDS':
       return { ...state, coordsLabel: action.label }
     case 'SET_PAGE_NAV':
@@ -328,6 +335,13 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
     case 'PATCH_ANNOTATIONS':
       return { ...state, annotations: action.updater(state.annotations) }
+    case 'UPDATE_ANNOTATION_TEXT':
+      return {
+        ...state,
+        annotations: state.annotations.map((a) =>
+          a.id === action.id && a.kind === 'text' ? { ...a, text: action.text } : a,
+        ),
+      }
     case 'SET_LAST_AUTOSAVE':
       return { ...state, lastAutosaveAt: action.at }
     case 'LOAD_FAVORITES': {

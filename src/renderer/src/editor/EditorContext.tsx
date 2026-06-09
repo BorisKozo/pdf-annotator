@@ -15,7 +15,7 @@ import { buildAnnotatedPdfBytes } from '../exportPdf'
 import { getFontEntry } from '../fonts'
 import { drawAnnotationOverlay, findAnnotationAtCanvasPoint } from '../overlay'
 import { closePdf, openPdfFromBuffer, renderPdfPage, getPdfJsDocument } from '../pdfSession'
-import type { Annotation, PdfPoint } from '../types'
+import type { Annotation, PdfPoint, TextAnnotation } from '../types'
 import { isPenAnnotation, isTextAnnotation } from '../types'
 import {
   annotationPastedAtTopLeft,
@@ -74,7 +74,9 @@ export type EditorContextValue = {
   syncColorUi: (hex: string) => void
   openPdfFlow: () => Promise<void>
   savePdfFlow: () => Promise<void>
+  savePdfDirectFlow: () => Promise<void>
   saveAnnotationsFlow: () => Promise<void>
+  saveAnnotationsDirectFlow: () => Promise<void>
   openAnnotationsFlow: () => Promise<void>
   closePdfFlow: () => Promise<void>
   changePage: (delta: number) => Promise<void>
@@ -122,6 +124,10 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   const pendingAnnotationImportModeRef = useRef<'replace' | 'append'>('replace')
   const lastAutosavedJsonRef = useRef<string | null>(null)
   const savedAnnotationsJsonRef = useRef<string | null>(null)
+  /** Path of the last successfully saved annotated PDF this session; null until first Save As. */
+  const lastSavedPdfPathRef = useRef<string | null>(null)
+  /** Path of the last annotations file loaded or saved; null until first open/save. */
+  const lastSavedAnnotationsPathRef = useRef<string | null>(null)
 
   const [confirmSpec, setConfirmSpec] = useState<ConfirmSpec | null>(null)
   const confirmResolverRef = useRef<((r: ConfirmResult) => void) | null>(null)
@@ -286,6 +292,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     discardShiftPenCompose()
     const totalPages = await openPdfFromBuffer(buffer.slice(0))
     lastAutosavedJsonRef.current = null
+    lastSavedPdfPathRef.current = null
+    lastSavedAnnotationsPathRef.current = null
     dispatch({
       type: 'PDF_OPENED',
       buffer,
@@ -341,6 +349,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       if (window.electronAPI) {
         const out = await window.electronAPI.savePDFBytes(data, suggested)
         if (!out.canceled) {
+          lastSavedPdfPathRef.current = out.filePath
           dispatch({
             type: 'SET_STATUS_FILE',
             label: out.filePath.replace(/\\/g, '/').split('/').pop() ?? 'saved.pdf',
@@ -368,6 +377,30 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  /** Quick-save: writes directly to the last used path; falls back to Save As if none yet. */
+  const savePdfDirectFlow = useCallback(async () => {
+    const s = stateRef.current
+    if (!s.pdfSourceBytes) return
+    const existingPath = lastSavedPdfPathRef.current
+    if (!existingPath || !window.electronAPI) {
+      // No known path yet (or browser fallback) → behave like Save As
+      await savePdfFlow()
+      return
+    }
+    try {
+      const bytes = await buildAnnotatedPdfBytes(s.pdfSourceBytes, s.annotations)
+      const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      const result = await window.electronAPI.savePDFBytesToPath(data, existingPath)
+      if (!result.ok) {
+        window.alert(`Save failed: ${result.error}`)
+      }
+    } catch (e) {
+      console.error(e)
+      const msg = e instanceof Error ? e.message : String(e)
+      window.alert(`Save failed: ${msg}`)
+    }
+  }, [savePdfFlow])
+
   const annotationsDefaultSavePath = useCallback((sourceFilePath: string | null) => {
     if (sourceFilePath != null) {
       return sourceFilePath.replace(/\.pdf$/i, '') + '_annotations.json'
@@ -385,8 +418,9 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       if (window.electronAPI?.saveAnnotationsJson) {
         const out = await window.electronAPI.saveAnnotationsJson(json, suggested)
         if (!out.canceled) {
+          lastSavedAnnotationsPathRef.current = out.filePath
           dispatch({
-            type: 'SET_STATUS_FILE',
+            type: 'SET_STATUS_ANNOTATIONS',
             label: out.filePath.replace(/\\/g, '/').split('/').pop() ?? 'annotations.json',
           })
           savedAnnotationsJsonRef.current = json
@@ -405,7 +439,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
-      dispatch({ type: 'SET_STATUS_FILE', label: filename })
+      dispatch({ type: 'SET_STATUS_ANNOTATIONS', label: filename })
       savedAnnotationsJsonRef.current = json
     } catch (e) {
       console.error(e)
@@ -414,6 +448,30 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     }
   }, [annotationsDefaultSavePath])
 
+  /** Quick-save annotations: writes directly to the last used path; falls back to Save As if none yet. */
+  const saveAnnotationsDirectFlow = useCallback(async () => {
+    const s = stateRef.current
+    if (!s.pdfSourceBytes) return
+    const existingPath = lastSavedAnnotationsPathRef.current
+    if (!existingPath || !window.electronAPI) {
+      await saveAnnotationsFlow()
+      return
+    }
+    try {
+      const json = serializeAnnotationsToJson(s.annotations, s.sourceFilePath)
+      const result = await window.electronAPI.saveAnnotationsJsonToPath(json, existingPath)
+      if (!result.ok) {
+        window.alert(`Save failed: ${result.error}`)
+      } else {
+        savedAnnotationsJsonRef.current = json
+      }
+    } catch (e) {
+      console.error(e)
+      const msg = e instanceof Error ? e.message : String(e)
+      window.alert(`Save failed: ${msg}`)
+    }
+  }, [saveAnnotationsFlow])
+
   /**
    * Apply annotations loaded from a file into the current session.
    * If the file's pdfPath doesn't match the open PDF, prompt to open the saved
@@ -421,19 +479,19 @@ export function EditorProvider({ children }: { children: ReactNode }) {
    * into current PDF; cancel → abort.
    */
   const applyLoadedAnnotations = useCallback(
-    async (parsed: ParsedAnnotationsFile, mode: 'replace' | 'append') => {
+    async (parsed: ParsedAnnotationsFile, mode: 'replace' | 'append'): Promise<boolean> => {
       const s = stateRef.current
       const loadedPath = parsed.pdfPath
 
       if (!s.pdfSourceBytes) {
         if (!loadedPath) {
           window.alert('The annotations file does not reference a PDF.')
-          return
+          return false
         }
         const ok = await tryOpenPdfByPath(loadedPath)
         if (!ok) {
           window.alert(`Could not open PDF:\n${loadedPath}`)
-          return
+          return false
         }
         flushSync(() => {
           dispatch({
@@ -447,7 +505,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
           after.annotations,
           after.sourceFilePath,
         )
-        return
+        return true
       }
 
       const currentPath = s.sourceFilePath
@@ -465,12 +523,12 @@ export function EditorProvider({ children }: { children: ReactNode }) {
             `Open PDF: ${currentPath ?? '(none)'}\n\n` +
             'Do you want to open the correct document?',
         })
-        if (result === 'cancel') return
+        if (result === 'cancel') return false
         if (result === 'yes') {
           const ok = await tryOpenPdfByPath(loadedPath!)
           if (!ok) {
             window.alert(`Could not open PDF:\n${loadedPath}`)
-            return
+            return false
           }
           flushSync(() => {
             dispatch({
@@ -484,7 +542,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
             after.annotations,
             after.sourceFilePath,
           )
-          return
+          return true
         }
         // 'no' falls through — load into currently open PDF
       }
@@ -499,6 +557,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
           after.sourceFilePath,
         )
       }
+      return true
     },
     [requestConfirm, tryOpenPdfByPath],
   )
@@ -522,7 +581,14 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         finalizeShiftPenCompose()
         activePenStrokeRef.current = null
         const parsed = parseAnnotationsFile(res.text)
-        await applyLoadedAnnotations(parsed, mode)
+        const loaded = await applyLoadedAnnotations(parsed, mode)
+        if (loaded) {
+          lastSavedAnnotationsPathRef.current = res.filePath
+          dispatch({
+            type: 'SET_STATUS_ANNOTATIONS',
+            label: res.filePath.replace(/\\/g, '/').split('/').pop() ?? 'annotations.json',
+          })
+        }
         return
       }
 
@@ -563,6 +629,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     activePenStrokeRef.current = null
     closePdf()
     lastAutosavedJsonRef.current = null
+    lastSavedPdfPathRef.current = null
+    lastSavedAnnotationsPathRef.current = null
     savedAnnotationsJsonRef.current = null
     void deleteAutosave()
     dispatch({ type: 'PDF_CLOSED' })
@@ -686,23 +754,24 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const showInlineInput = useCallback(
-    (clientX: number, clientY: number, pdfX: number, pdfY: number) => {
+    (clientX: number, clientY: number, pdfX: number, pdfY: number, editAnn?: TextAnnotation) => {
       const overlay = overlayCanvasRef.current
       const stack = canvasStackRef.current
       const input = inlineInputRef.current
       if (!overlay || !stack || !input) return
       const stackRect = stack.getBoundingClientRect()
       const s = stateRef.current
-      const size = s.styleFontSize
-      const family = getFontEntry(s.styleFontId).cssFamily
-      const inkHex = s.currentColor.hex
+      const size = editAnn ? editAnn.size : s.styleFontSize
+      const family = getFontEntry(editAnn ? editAnn.fontId : s.styleFontId).cssFamily
+      const inkHex = editAnn ? editAnn.hex : s.currentColor.hex
+      const isBold = editAnn ? (editAnn.bold ?? false) : s.currentBold
       const lightField = hexIsNearWhite(inkHex)
       input.style.display = 'block'
       input.style.left = `${clientX - stackRect.left}px`
       input.style.top = `${clientY - stackRect.top - size * s.scale}px`
       input.style.fontSize = `${size * s.scale}px`
       input.style.fontFamily = family
-      input.style.fontWeight = s.currentBold ? 'bold' : '400'
+      input.style.fontWeight = isBold ? 'bold' : '400'
       input.style.backgroundColor = lightField ? '#000000' : '#ffffff'
       input.style.color = inkHex
       input.style.caretColor = inkHex
@@ -710,8 +779,9 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       input.style.boxShadow = lightField
         ? '0 0 0 1px rgba(255,255,255,0.2), 0 4px 20px rgba(0,0,0,0.45)'
         : '0 0 0 1px rgba(0,0,0,0.12), 0 4px 20px rgba(0,0,0,0.2)'
-      input.value = ''
+      input.value = editAnn ? editAnn.text : ''
       input.focus()
+      if (editAnn) input.select()
 
       let finished = false
       const commit = (text: string) => {
@@ -719,7 +789,9 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         finished = true
         input.onblur = null
         const t = text.trim()
-        if (t) {
+        if (editAnn) {
+          if (t) dispatch({ type: 'UPDATE_ANNOTATION_TEXT', id: editAnn.id, text: t })
+        } else if (t) {
           const cur = stateRef.current
           const newId = cur.nextAnnId
           const ann: Annotation = {
@@ -991,11 +1063,28 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       showInlineInput(e.clientX, e.clientY, pdfX, pdfY)
     }
 
+    const onStackDblClick = (e: MouseEvent) => {
+      if (!getPdfJsDocument()) return
+      if (isDrawingMode(stateRef.current.editorMode)) return
+      if (isFormFieldTarget(e.target)) return
+      if (e.target !== pdfCanvas && e.target !== overlay) return
+      const s = stateRef.current
+      const bm = bitmapFromClient(e.clientX, e.clientY)
+      if (!bm) return
+      const ctx = overlay.getContext('2d')
+      if (!ctx) return
+      const hit = findAnnotationAtCanvasPoint(ctx, bm.bh, s.scale, s.currentPage, bm.px, bm.py, s.annotations)
+      if (hit && hit.kind === 'text') {
+        showInlineInput(e.clientX, e.clientY, hit.x, hit.y, hit)
+      }
+    }
+
     stack.addEventListener('pointerdown', onPointerDown)
     stack.addEventListener('pointerup', endPen)
     stack.addEventListener('pointercancel', endPen)
     stack.addEventListener('pointermove', onPointerMove)
     stack.addEventListener('click', onStackClick)
+    stack.addEventListener('dblclick', onStackDblClick)
 
     return () => {
       stack.removeEventListener('pointerdown', onPointerDown)
@@ -1003,6 +1092,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       stack.removeEventListener('pointercancel', endPen)
       stack.removeEventListener('pointermove', onPointerMove)
       stack.removeEventListener('click', onStackClick)
+      stack.removeEventListener('dblclick', onStackDblClick)
     }
   }, [
     commitActivePenIfAny,
@@ -1355,7 +1445,9 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     syncColorUi,
     openPdfFlow,
     savePdfFlow,
+    savePdfDirectFlow,
     saveAnnotationsFlow,
+    saveAnnotationsDirectFlow,
     openAnnotationsFlow,
     closePdfFlow,
     changePage,

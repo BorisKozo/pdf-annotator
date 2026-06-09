@@ -4,17 +4,23 @@ import { useEditor } from '../editor/EditorContext'
 function FileMenu({
   onOpenPdf,
   onSavePdf,
+  onSavePdfAs,
   onClosePdf,
   onOpenAnnotations,
   onSaveAnnotations,
+  onSaveAnnotationsAs,
   pdfLoaded,
+  canSave,
 }: {
   onOpenPdf: () => void
   onSavePdf: () => void
+  onSavePdfAs: () => void
   onClosePdf: () => void
   onOpenAnnotations: () => void
   onSaveAnnotations: () => void
+  onSaveAnnotationsAs: () => void
   pdfLoaded: boolean
+  canSave: boolean
 }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -74,10 +80,19 @@ function FileMenu({
             type="button"
             role="menuitem"
             className={itemCls}
-            disabled={!pdfLoaded}
+            disabled={!canSave}
             onClick={() => run(onSavePdf)}
           >
-            Save PDF…
+            Save PDF
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            disabled={!pdfLoaded}
+            onClick={() => run(onSavePdfAs)}
+          >
+            Save PDF As...
           </button>
           <button
             type="button"
@@ -102,10 +117,19 @@ function FileMenu({
             type="button"
             role="menuitem"
             className={itemCls}
-            disabled={!pdfLoaded}
+            disabled={!canSave}
             onClick={() => run(onSaveAnnotations)}
           >
-            Save Annotations…
+            Save Annotations
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            disabled={!pdfLoaded}
+            onClick={() => run(onSaveAnnotationsAs)}
+          >
+            Save Annotations As...
           </button>
         </div>
       )}
@@ -167,7 +191,9 @@ export function Toolbar() {
     state,
     openPdfFlow,
     savePdfFlow,
+    savePdfDirectFlow,
     saveAnnotationsFlow,
+    saveAnnotationsDirectFlow,
     openAnnotationsFlow,
     closePdfFlow,
     changePage,
@@ -175,6 +201,8 @@ export function Toolbar() {
   const { totalPages, currentPage, pdfSourceBytes, lastAutosaveAt } = state
   const pageLabel = totalPages > 0 ? `${currentPage} / ${totalPages}` : '—'
   const navDisabled = totalPages === 0
+  // Save operations require the Electron file-system API; disable them in browser.
+  const canSave = !!window.electronAPI && pdfSourceBytes !== null
 
   return (
     <header
@@ -187,11 +215,14 @@ export function Toolbar() {
         </span>
         <FileMenu
           onOpenPdf={() => void openPdfFlow()}
-          onSavePdf={() => void savePdfFlow()}
+          onSavePdf={() => void savePdfDirectFlow()}
+          onSavePdfAs={() => void savePdfFlow()}
           onClosePdf={() => void closePdfFlow()}
           onOpenAnnotations={() => void openAnnotationsFlow()}
-          onSaveAnnotations={() => void saveAnnotationsFlow()}
+          onSaveAnnotations={() => void saveAnnotationsDirectFlow()}
+          onSaveAnnotationsAs={() => void saveAnnotationsFlow()}
           pdfLoaded={pdfSourceBytes !== null}
+          canSave={canSave}
         />
       </div>
       <div className="relative flex min-w-0 flex-1 items-center">

@@ -16,6 +16,10 @@ declare global {
         data: ArrayBuffer,
         defaultPath?: string,
       ) => Promise<{ canceled: true } | { canceled: false; filePath: string }>
+      savePDFBytesToPath: (
+        data: ArrayBuffer,
+        filePath: string,
+      ) => Promise<{ ok: true } | { ok: false; error: string }>
       openAnnotationsFile: () => Promise<
         { canceled: true } | { canceled: false; filePath: string; text: string }
       >
@@ -23,6 +27,10 @@ declare global {
         jsonText: string,
         defaultPath?: string,
       ) => Promise<{ canceled: true } | { canceled: false; filePath: string }>
+      saveAnnotationsJsonToPath: (
+        jsonText: string,
+        filePath: string,
+      ) => Promise<{ ok: true } | { ok: false; error: string }>
       readAutosave: () => Promise<{ text: string | null }>
       writeAutosave: (jsonText: string) => Promise<{ ok: boolean }>
       deleteAutosave: () => Promise<{ ok: boolean }>

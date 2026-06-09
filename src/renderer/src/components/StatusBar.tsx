@@ -8,7 +8,10 @@ export function StatusBar() {
       id="status"
     >
       <span>
-        File: <strong className="font-medium text-[var(--text)]" id="st-file">{state.statusFileLabel}</strong>
+        PDF: <strong className="font-medium text-[var(--text)]" id="st-file">{state.statusFileLabel}</strong>
+      </span>
+      <span>
+        Annotations: <strong className="font-medium text-[var(--text)]" id="st-ann">{state.statusAnnotationsLabel}</strong>
       </span>
       <span>
         Coords (PDF):{' '}

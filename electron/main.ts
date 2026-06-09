@@ -116,6 +116,23 @@ ipcMain.handle(
 )
 
 ipcMain.handle(
+  'pdf:saveToPath',
+  async (
+    _event,
+    data: ArrayBuffer,
+    filePath: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> => {
+    try {
+      await writeFile(filePath, Buffer.from(new Uint8Array(data)))
+      return { ok: true }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { ok: false, error: msg }
+    }
+  },
+)
+
+ipcMain.handle(
   'annotations:open',
   async (
     event,
@@ -151,6 +168,23 @@ ipcMain.handle(
     if (canceled || !filePath) return { canceled: true }
     await writeFile(filePath, jsonText, 'utf8')
     return { canceled: false, filePath }
+  },
+)
+
+ipcMain.handle(
+  'annotations:saveToPath',
+  async (
+    _event,
+    jsonText: string,
+    filePath: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> => {
+    try {
+      await writeFile(filePath, jsonText, 'utf8')
+      return { ok: true }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { ok: false, error: msg }
+    }
   },
 )
 

@@ -26,10 +26,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('pdf:openByPath', filePath),
   savePDFBytes: (data: ArrayBuffer, defaultPath?: string): Promise<SavePdfResult> =>
     ipcRenderer.invoke('pdf:save', data, defaultPath),
+  savePDFBytesToPath: (
+    data: ArrayBuffer,
+    filePath: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('pdf:saveToPath', data, filePath),
   openAnnotationsFile: (): Promise<OpenAnnotationsResult> =>
     ipcRenderer.invoke('annotations:open'),
   saveAnnotationsJson: (jsonText: string, defaultPath?: string): Promise<SaveAnnotationsResult> =>
     ipcRenderer.invoke('annotations:save', jsonText, defaultPath),
+  saveAnnotationsJsonToPath: (
+    jsonText: string,
+    filePath: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('annotations:saveToPath', jsonText, filePath),
   readAutosave: (): Promise<{ text: string | null }> => ipcRenderer.invoke('autosave:read'),
   writeAutosave: (jsonText: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('autosave:write', jsonText),
