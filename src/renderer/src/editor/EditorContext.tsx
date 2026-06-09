@@ -82,6 +82,7 @@ export type EditorContextValue = {
   setEditorMode: (mode: EditorMode) => void
   selectAnnotationById: (id: number) => Promise<void>
   deleteAnnotationById: (id: number) => void
+  setHoveredAnnotationId: (id: number | null) => void
   toggleBold: () => void
   bindCanvasListeners: () => () => void
   bindGlobalKeys: () => () => void
@@ -111,6 +112,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null)
   const inlineInputRef = useRef<HTMLInputElement>(null)
   const canvasStackRef = useRef<HTMLDivElement>(null)
+  const hoveredAnnotationIdRef = useRef<number | null>(null)
 
   const activePenStrokeRef = useRef<ActivePenStroke | null>(null)
   const shiftPenComposeRef = useRef<ShiftPenCompose | null>(null)
@@ -159,6 +161,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       s.annotations,
       s.selectedId,
       getActivePenPreviewForOverlay(activePenStrokeRef.current, shiftPenComposeRef.current),
+      hoveredAnnotationIdRef.current,
     )
   }, [])
 
@@ -252,6 +255,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         state.annotations,
         state.selectedId,
         getActivePenPreviewForOverlay(activePenStrokeRef.current, shiftPenComposeRef.current),
+        hoveredAnnotationIdRef.current,
       )
     })()
     return () => {
@@ -653,6 +657,14 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       }
     },
     [finalizeShiftPenCompose, redrawOverlayOnly],
+  )
+
+  const setHoveredAnnotationId = useCallback(
+    (id: number | null) => {
+      hoveredAnnotationIdRef.current = id
+      redrawOverlayOnly()
+    },
+    [redrawOverlayOnly],
   )
 
   const deleteAnnotationById = useCallback(
@@ -1351,6 +1363,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     setEditorMode,
     selectAnnotationById,
     deleteAnnotationById,
+    setHoveredAnnotationId,
     toggleBold,
     bindCanvasListeners,
     bindGlobalKeys,

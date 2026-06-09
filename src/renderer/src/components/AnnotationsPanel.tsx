@@ -13,7 +13,7 @@ function defaultEditableName(ann: Annotation): string {
 }
 
 export function AnnotationsPanel() {
-  const { state, dispatch, selectAnnotationById, deleteAnnotationById } = useEditor()
+  const { state, dispatch, selectAnnotationById, deleteAnnotationById, setHoveredAnnotationId } = useEditor()
   const { annotations, selectedId } = state
   const sorted = annotationsSortedLikeList(annotations)
 
@@ -68,7 +68,7 @@ export function AnnotationsPanel() {
       <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
         Annotations (<span id="ann-count">{annotations.length}</span>)
       </div>
-      <div className="mt-2 min-h-0 flex-1 overflow-y-auto" id="annotations-list">
+      <div className="mt-2 min-h-0 flex-1 overflow-y-auto" id="annotations-list" onMouseLeave={() => setHoveredAnnotationId(null)}>
         {annotations.length === 0 ? (
           <div className="p-2.5 text-center text-xs text-[var(--muted)]">No annotations yet</div>
         ) : (
@@ -98,6 +98,7 @@ export function AnnotationsPanel() {
                     ? 'border-[var(--accent)] bg-[rgba(91,140,255,0.12)]'
                     : '')
                 }
+                onMouseEnter={() => setHoveredAnnotationId(ann.id)}
                 onClick={(ev) => {
                   if (
                     (ev.target as HTMLElement).closest(

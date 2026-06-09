@@ -82,6 +82,7 @@ export function drawAnnotationOverlay(
   annotations: Annotation[],
   selectedId: number | null,
   penPreview?: PenDrawPreview | null,
+  hoveredId: number | null = null,
 ): void {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
   const list = annotations.filter((a) => a.page === pageOneBased)
@@ -90,7 +91,8 @@ export function drawAnnotationOverlay(
       for (const seg of ann.segments) {
         drawPenPolyline(ctx, canvasHeight, scale, seg, ann.strokeWidth, ann.hex, ann.opacity)
       }
-      if (ann.id === selectedId) {
+      const penHighlightId = ann.id === selectedId ? selectedId : ann.id === hoveredId ? hoveredId : null
+      if (penHighlightId !== null) {
         const b = penBoundsPdf(ann)
         if (!b) continue
         const c1 = pdfPointToCanvas({ x: b.minX, y: b.minY }, canvasHeight, scale)
@@ -100,7 +102,8 @@ export function drawAnnotationOverlay(
         const top = Math.min(c1.cy, c2.cy)
         const bottom = Math.max(c1.cy, c2.cy)
         ctx.save()
-        ctx.strokeStyle = 'rgba(233, 69, 96, 0.85)'
+        ctx.strokeStyle =
+          ann.id === selectedId ? 'rgba(233, 69, 96, 0.85)' : 'rgba(91, 140, 255, 0.55)'
         ctx.lineWidth = 1.5
         ctx.setLineDash([4, 3])
         ctx.strokeRect(left - 1, top - 1, right - left + 2, bottom - top + 2)
@@ -123,11 +126,12 @@ export function drawAnnotationOverlay(
     ctx.font = `${ann.bold === true ? 'bold ' : ''}${ann.size * scale}px ${family}`
     ctx.fillStyle = ann.hex
     ctx.fillText(ann.text, cx, cy)
-    if (ann.id === selectedId) {
+    if (ann.id === selectedId || (ann.id === hoveredId && ann.id !== selectedId)) {
       const w = ctx.measureText(ann.text).width
       const h = ann.size * scale
       const left = rtl ? cx - w : cx
-      ctx.strokeStyle = 'rgba(233, 69, 96, 0.85)'
+      ctx.strokeStyle =
+        ann.id === selectedId ? 'rgba(233, 69, 96, 0.85)' : 'rgba(91, 140, 255, 0.55)'
       ctx.lineWidth = 1.5
       ctx.setLineDash([4, 3])
       ctx.strokeRect(left - 2, cy - h - 2, w + 4, h + 6)
