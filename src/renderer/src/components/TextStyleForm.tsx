@@ -14,6 +14,9 @@ export function TextStyleForm() {
     <div
       className={`border-b border-[var(--border)] px-4 py-3.5 ${hidden ? 'hidden' : ''}`}
       id="section-text-style"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') (e.target as HTMLElement).blur()
+      }}
     >
       <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
         Text style
