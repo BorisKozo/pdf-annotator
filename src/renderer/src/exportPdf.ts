@@ -26,6 +26,8 @@ import { getTextDirection } from './bidi'
 import {
   getFontBytesForExport,
   getFontEntry,
+  PDF_EMBED_REGULAR_HEBREW,
+  PDF_EMBED_REGULAR_LATIN,
   PDF_EMBED_BOLD_HEBREW,
   PDF_EMBED_BOLD_LATIN,
 } from './fonts'
@@ -150,7 +152,7 @@ function segmentForBoldPdf(text: string): { hebrew: boolean; s: string }[] {
   return out
 }
 
-function drawBoldSegmented(
+function drawSegmented(
   page: PDFPage,
   text: string,
   anchorX: number,
@@ -230,22 +232,32 @@ export async function buildAnnotatedPdfBytes(
   const resolveFont = async (
     fontId: string,
     bold: boolean,
-  ): Promise<{ font: PDFFont; segmentedBold: false } | { segmentedBold: true }> => {
+  ): Promise<{ font: PDFFont; segmented: false } | { segmented: true; bold: boolean }> => {
     const entry = getFontEntry(fontId)
     if (entry.standardFont) {
       const key = bold && entry.standardFontBold ? entry.standardFontBold : entry.standardFont
-      return { font: embedStandard(key), segmentedBold: false }
+      return { font: embedStandard(key), segmented: false }
     }
-    if (bold) return { segmentedBold: true }
-    return { font: await embedFor(fontId), segmentedBold: false }
+    // Non-standard (custom) fonts always use segmented subset rendering so that
+    // Hebrew and Latin characters each use a correctly-weighted woff2 file.
+    return { segmented: true, bold }
   }
 
-  const needsHebrewBold = annotations.some(
-    (a) => isTextAnnotation(a) && a.bold === true && !getFontEntry(a.fontId).standardFont,
+  // Preload whichever subset font pairs are actually needed.
+  const customAnnotations = annotations.filter(
+    (a) => isTextAnnotation(a) && !getFontEntry(a.fontId).standardFont,
   )
+  const needsRegular = customAnnotations.some((a) => isTextAnnotation(a) && a.bold !== true)
+  const needsBold = customAnnotations.some((a) => isTextAnnotation(a) && a.bold === true)
+  let regularHe: PDFFont | null = null
+  let regularLat: PDFFont | null = null
   let boldHe: PDFFont | null = null
   let boldLat: PDFFont | null = null
-  if (needsHebrewBold) {
+  if (needsRegular) {
+    regularHe = await embedFor(PDF_EMBED_REGULAR_HEBREW)
+    regularLat = await embedFor(PDF_EMBED_REGULAR_LATIN)
+  }
+  if (needsBold) {
     boldHe = await embedFor(PDF_EMBED_BOLD_HEBREW)
     boldLat = await embedFor(PDF_EMBED_BOLD_LATIN)
   }
@@ -303,19 +315,13 @@ export async function buildAnnotatedPdfBytes(
 
     const rtl = getTextDirection(ann.text) === 'rtl'
     const resolved = await resolveFont(ann.fontId, ann.bold === true)
-    if (resolved.segmentedBold && boldHe && boldLat) {
-      drawBoldSegmented(
-        page,
-        ann.text,
-        ann.x,
-        rtl,
-        ann.y,
-        ann.size,
-        color,
-        boldHe,
-        boldLat,
-      )
-    } else if (!resolved.segmentedBold) {
+    if (resolved.segmented) {
+      const he = resolved.bold ? boldHe : regularHe
+      const lat = resolved.bold ? boldLat : regularLat
+      if (he && lat) {
+        drawSegmented(page, ann.text, ann.x, rtl, ann.y, ann.size, color, he, lat)
+      }
+    } else {
       drawTextBidi(page, ann.text, ann.x, rtl, ann.y, ann.size, color, resolved.font)
     }
   }

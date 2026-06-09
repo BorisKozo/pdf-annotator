@@ -1,3 +1,5 @@
+import regularHebrewWoff2Url from '@fontsource/noto-sans-hebrew/files/noto-sans-hebrew-hebrew-500-normal.woff2?url'
+import regularLatinWoff2Url from '@fontsource/noto-sans-hebrew/files/noto-sans-hebrew-latin-500-normal.woff2?url'
 import boldHebrewWoff2Url from '@fontsource/noto-sans-hebrew/files/noto-sans-hebrew-hebrew-700-normal.woff2?url'
 import boldLatinWoff2Url from '@fontsource/noto-sans-hebrew/files/noto-sans-hebrew-latin-700-normal.woff2?url'
 import { StandardFonts } from 'pdf-lib'
@@ -52,7 +54,14 @@ export function getFontEntry(id: string): FontEntry {
   return FONT_CATALOG.find((f) => f.id === id) ?? FONT_CATALOG[0]!
 }
 
-/** pdf-lib embed keys for bold subset fonts (mixed Hebrew+Latin in one annotation). */
+/**
+ * pdf-lib embed keys for segmented subset fonts (Hebrew+Latin in one annotation).
+ * Regular = weight 500 (Medium) — renders noticeably heavier than the default
+ * VF weight-400 in PDF viewers which lack subpixel hinting.
+ * Bold = weight 700.
+ */
+export const PDF_EMBED_REGULAR_HEBREW = 'pdf-embed-regular-hebrew-woff2'
+export const PDF_EMBED_REGULAR_LATIN = 'pdf-embed-regular-latin-woff2'
 export const PDF_EMBED_BOLD_HEBREW = 'pdf-embed-bold-hebrew-woff2'
 export const PDF_EMBED_BOLD_LATIN = 'pdf-embed-bold-latin-woff2'
 
@@ -62,7 +71,9 @@ export async function getFontBytesForExport(fontKey: string): Promise<ArrayBuffe
   const hit = cachedFontBytes.get(fontKey)
   if (hit) return hit.slice(0)
   let pathOrUrl: string
-  if (fontKey === PDF_EMBED_BOLD_HEBREW) pathOrUrl = boldHebrewWoff2Url
+  if (fontKey === PDF_EMBED_REGULAR_HEBREW) pathOrUrl = regularHebrewWoff2Url
+  else if (fontKey === PDF_EMBED_REGULAR_LATIN) pathOrUrl = regularLatinWoff2Url
+  else if (fontKey === PDF_EMBED_BOLD_HEBREW) pathOrUrl = boldHebrewWoff2Url
   else if (fontKey === PDF_EMBED_BOLD_LATIN) pathOrUrl = boldLatinWoff2Url
   else {
     const entry = getFontEntry(fontKey)
