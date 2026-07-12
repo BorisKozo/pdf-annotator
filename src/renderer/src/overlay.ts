@@ -124,6 +124,7 @@ export function drawAnnotationOverlay(
     ctx.direction = dir
     ctx.textAlign = rtl ? 'right' : 'left'
     ctx.font = `${ann.bold === true ? 'bold ' : ''}${ann.size * scale}px ${family}`
+    if (ann.letterSpacing) ctx.letterSpacing = `${ann.letterSpacing * scale}px`
     ctx.fillStyle = ann.hex
     ctx.fillText(ann.text, cx, cy)
     if (ann.id === selectedId || (ann.id === hoveredId && ann.id !== selectedId)) {
@@ -194,6 +195,7 @@ export function textAnnotationTopLeftPdf(
   ctx.direction = dir
   ctx.textAlign = rtl ? 'right' : 'left'
   ctx.font = `${ann.bold === true ? 'bold ' : ''}${ann.size * scale}px ${family}`
+  if (ann.letterSpacing) ctx.letterSpacing = `${ann.letterSpacing * scale}px`
   const w = ctx.measureText(ann.text).width
   const h = ann.size * scale
   const left = rtl ? cx - w : cx
@@ -237,6 +239,7 @@ function hitTestAnnotation(
   ctx.direction = dir
   ctx.textAlign = rtl ? 'right' : 'left'
   ctx.font = `${ann.bold === true ? 'bold ' : ''}${ann.size * scale}px ${family}`
+  if (ann.letterSpacing) ctx.letterSpacing = `${ann.letterSpacing * scale}px`
   const w = ctx.measureText(ann.text).width
   const h = ann.size * scale
   const left = rtl ? cx - w : cx

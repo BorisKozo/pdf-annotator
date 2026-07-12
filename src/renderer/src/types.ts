@@ -17,6 +17,8 @@ export interface TextAnnotation {
   size: number
   /** When true, uses weight 700 in preview and bold subset fonts in exported PDF. */
   bold?: boolean
+  /** Extra space between characters in PDF points. 0 / absent = no extra spacing. */
+  letterSpacing?: number
   r: number
   g: number
   b: number

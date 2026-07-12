@@ -1,7 +1,9 @@
 import { useEditor } from '../editor/EditorContext'
 
+const ARROW_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'])
+
 export function PenStyleForm() {
-  const { state, dispatch } = useEditor()
+  const { state, dispatch, nudgeSelectedAnnotation } = useEditor()
   const hidden = state.editorMode !== 'pen' && state.editorMode !== 'highlight'
   const isHighlight = state.editorMode === 'highlight'
   const heading = isHighlight ? 'Highlight' : 'Pen'
@@ -15,6 +17,14 @@ export function PenStyleForm() {
   const syncWidth = (raw: number) => {
     const v = Number.isFinite(raw) ? Math.min(max, Math.max(min, raw)) : fallback
     dispatch({ type: actionType, width: v } as never)
+  }
+
+  /** Arrow keys must never nudge the slider's own value — forward them to move the
+   *  selected annotation instead, matching what arrow keys do everywhere else. */
+  const handleSliderArrowKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!ARROW_KEYS.has(e.key)) return
+    e.preventDefault()
+    nudgeSelectedAnnotation(e.key, e.shiftKey, e.ctrlKey || e.metaKey)
   }
 
   return (
@@ -42,9 +52,10 @@ export function PenStyleForm() {
           id="pen-width-range"
           min={min}
           max={rangeMax}
-          className="min-w-0 flex-1"
+          className="min-w-0 flex-1 outline-none"
           value={Math.min(rangeMax, width)}
           onInput={(e) => syncWidth(parseInt((e.target as HTMLInputElement).value, 10))}
+          onKeyDown={handleSliderArrowKey}
         />
       </div>
       <p className="mt-1.5 text-[11px] leading-snug text-[var(--muted)]">

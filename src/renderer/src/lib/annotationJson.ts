@@ -45,6 +45,10 @@ function parseTextAnnotation(raw: Record<string, unknown>): TextAnnotation {
     fontId: fontIds.has(fontId) ? fontId : DEFAULT_FONT_ID,
     size: num(raw.size, 'size'),
     bold: raw.bold === true ? true : undefined,
+    letterSpacing:
+      typeof raw.letterSpacing === 'number' && Number.isFinite(raw.letterSpacing) && raw.letterSpacing > 0
+        ? raw.letterSpacing
+        : undefined,
     r: num(raw.r, 'r'),
     g: num(raw.g, 'g'),
     b: num(raw.b, 'b'),

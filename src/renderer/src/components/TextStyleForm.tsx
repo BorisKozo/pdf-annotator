@@ -1,13 +1,44 @@
-import { FONT_CATALOG } from '../fonts'
+import { FONT_CATALOG, fontSupportsHebrew, getFontEntry } from '../fonts'
+import { getTextDirection } from '../bidi'
 import { useEditor } from '../editor/EditorContext'
 
+const ARROW_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'])
+
 export function TextStyleForm() {
-  const { state, dispatch, toggleBold } = useEditor()
+  const { state, dispatch, toggleBold, nudgeSelectedAnnotation } = useEditor()
   const hidden = state.editorMode !== 'text'
+
+  /** Arrow keys must never nudge a slider's own value — forward them to move the
+   *  selected annotation instead, matching what arrow keys do everywhere else. */
+  const handleSliderArrowKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!ARROW_KEYS.has(e.key)) return
+    e.preventDefault()
+    nudgeSelectedAnnotation(e.key, e.shiftKey, e.ctrlKey || e.metaKey)
+  }
+
+  const handleFontChange = (fontId: string) => {
+    dispatch({ type: 'SET_STYLE_FONT', fontId })
+    const target = state.annotations.find((a) => a.id === state.selectedId)
+    if (
+      target &&
+      target.kind === 'text' &&
+      getTextDirection(target.text) === 'rtl' &&
+      !fontSupportsHebrew(fontId)
+    ) {
+      window.alert(
+        `"${getFontEntry(fontId).label}" does not support Hebrew — this text will not render correctly in the exported PDF. Switch to "Noto Sans Hebrew".`,
+      )
+    }
+  }
 
   const syncSize = (raw: number) => {
     const v = Number.isFinite(raw) ? Math.min(200, Math.max(6, raw)) : 14
     dispatch({ type: 'SET_STYLE_FONT_SIZE', size: v })
+  }
+
+  const syncSpacing = (raw: number) => {
+    const v = Number.isFinite(raw) ? Math.max(0, raw) : 0
+    dispatch({ type: 'SET_STYLE_LETTER_SPACING', spacing: v })
   }
 
   return (
@@ -29,7 +60,7 @@ export function TextStyleForm() {
           id="font-select"
           className="h-[30px] min-w-0 flex-1 rounded-[5px] border border-[var(--border)] bg-[var(--bg)] px-2 text-xs text-[var(--text)] outline-none"
           value={state.styleFontId}
-          onChange={(e) => dispatch({ type: 'SET_STYLE_FONT', fontId: e.target.value })}
+          onChange={(e) => handleFontChange(e.target.value)}
         >
           {FONT_CATALOG.map((f) => (
             <option key={f.id} value={f.id}>
@@ -56,9 +87,36 @@ export function TextStyleForm() {
           id="font-size-range"
           min={6}
           max={72}
-          className="min-w-0 flex-1"
+          className="min-w-0 flex-1 outline-none"
           value={Math.min(72, state.styleFontSize)}
           onInput={(e) => syncSize(parseInt((e.target as HTMLInputElement).value, 10))}
+          onKeyDown={handleSliderArrowKey}
+        />
+      </div>
+      <div className="mb-2 flex items-center gap-2">
+        <label className="w-10 shrink-0 text-xs text-[var(--muted)]" htmlFor="letter-spacing-num">
+          Spacing
+        </label>
+        <input
+          type="number"
+          id="letter-spacing-num"
+          min={0}
+          max={100}
+          step={1}
+          className="h-[30px] w-[52px] shrink-0 flex-none rounded-[5px] border border-[var(--border)] bg-[var(--bg)] px-2 text-center text-xs text-[var(--text)] outline-none"
+          value={state.styleLetterSpacing}
+          onChange={(e) => syncSpacing(parseFloat(e.target.value))}
+        />
+        <input
+          type="range"
+          id="letter-spacing-range"
+          min={0}
+          max={50}
+          step={1}
+          className="min-w-0 flex-1 outline-none"
+          value={Math.min(50, state.styleLetterSpacing)}
+          onInput={(e) => syncSpacing(parseFloat((e.target as HTMLInputElement).value))}
+          onKeyDown={handleSliderArrowKey}
         />
       </div>
       <div className="mb-2 flex items-center gap-2">

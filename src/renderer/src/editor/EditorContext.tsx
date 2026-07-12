@@ -12,7 +12,8 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { buildAnnotatedPdfBytes } from '../exportPdf'
-import { getFontEntry } from '../fonts'
+import { fontSupportsHebrew, getFontEntry } from '../fonts'
+import { getTextDirection } from '../bidi'
 import { drawAnnotationOverlay, findAnnotationAtCanvasPoint } from '../overlay'
 import { closePdf, openPdfFromBuffer, renderPdfPage, getPdfJsDocument } from '../pdfSession'
 import type { Annotation, PdfPoint, TextAnnotation } from '../types'
@@ -86,6 +87,8 @@ export type EditorContextValue = {
   deleteAnnotationById: (id: number) => void
   setHoveredAnnotationId: (id: number | null) => void
   toggleBold: () => void
+  /** Nudges the selected annotation by arrow key; returns true if it moved (key handled). */
+  nudgeSelectedAnnotation: (key: string, shiftKey: boolean, ctrlKey: boolean) => boolean
   bindCanvasListeners: () => () => void
   bindGlobalKeys: () => () => void
   bindShiftPenFinalize: () => () => void
@@ -718,6 +721,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
           size: ann.size,
           bold: ann.bold === true,
           color: inkColorFromHex(ann.hex),
+          letterSpacing: ann.letterSpacing ?? 0,
         })
       } else if (isPenAnnotation(ann)) {
         dispatch({ type: 'SYNC_COLOR_UI', color: inkColorFromHex(ann.hex) })
@@ -753,6 +757,14 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'TOGGLE_BOLD_TO_SELECTION' })
   }, [])
 
+  const warnIfFontMismatch = (fontId: string, text: string): void => {
+    if (getTextDirection(text) === 'rtl' && !fontSupportsHebrew(fontId)) {
+      window.alert(
+        `"${getFontEntry(fontId).label}" does not support Hebrew — this text will not render correctly in the exported PDF. Switch to "Noto Sans Hebrew".`,
+      )
+    }
+  }
+
   const showInlineInput = useCallback(
     (clientX: number, clientY: number, pdfX: number, pdfY: number, editAnn?: TextAnnotation) => {
       const overlay = overlayCanvasRef.current
@@ -765,6 +777,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       const family = getFontEntry(editAnn ? editAnn.fontId : s.styleFontId).cssFamily
       const inkHex = editAnn ? editAnn.hex : s.currentColor.hex
       const isBold = editAnn ? (editAnn.bold ?? false) : s.currentBold
+      const ls = editAnn ? (editAnn.letterSpacing ?? 0) : s.styleLetterSpacing
       const lightField = hexIsNearWhite(inkHex)
       input.style.display = 'block'
       input.style.left = `${clientX - stackRect.left}px`
@@ -772,6 +785,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       input.style.fontSize = `${size * s.scale}px`
       input.style.fontFamily = family
       input.style.fontWeight = isBold ? 'bold' : '400'
+      input.style.letterSpacing = ls > 0 ? `${ls * s.scale}px` : ''
       input.style.backgroundColor = lightField ? '#000000' : '#ffffff'
       input.style.color = inkHex
       input.style.caretColor = inkHex
@@ -790,7 +804,10 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         input.onblur = null
         const t = text.trim()
         if (editAnn) {
-          if (t) dispatch({ type: 'UPDATE_ANNOTATION_TEXT', id: editAnn.id, text: t })
+          if (t) {
+            dispatch({ type: 'UPDATE_ANNOTATION_TEXT', id: editAnn.id, text: t })
+            warnIfFontMismatch(editAnn.fontId, t)
+          }
         } else if (t) {
           const cur = stateRef.current
           const newId = cur.nextAnnId
@@ -808,8 +825,10 @@ export function EditorProvider({ children }: { children: ReactNode }) {
             b: cur.currentColor.b,
             hex: cur.currentColor.hex,
             bold: cur.currentBold,
+            letterSpacing: cur.styleLetterSpacing > 0 ? cur.styleLetterSpacing : undefined,
           }
           dispatch({ type: 'ADD_ANNOTATION', ann })
+          warnIfFontMismatch(cur.styleFontId, t)
         }
         input.style.display = 'none'
         input.value = ''
@@ -1103,6 +1122,82 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     showInlineInput,
   ])
 
+  const nudgeSelectedAnnotation = useCallback(
+    (key: string, shiftKey: boolean, ctrlKey: boolean): boolean => {
+      const sid = stateRef.current.selectedId
+      if (sid === null || !getPdfJsDocument()) return false
+      const s = stateRef.current
+      const ann = s.annotations.find((a) => a.id === sid)
+      if (!ann || ann.page !== s.currentPage) return false
+
+      // Ctrl+Arrow adjusts text style (size / letter spacing) instead of moving.
+      if (ctrlKey) {
+        if (!isTextAnnotation(ann)) return false
+        switch (key) {
+          case 'ArrowUp':
+            dispatch({ type: 'SET_STYLE_FONT_SIZE', size: ann.size + 1 })
+            return true
+          case 'ArrowDown':
+            dispatch({ type: 'SET_STYLE_FONT_SIZE', size: ann.size - 1 })
+            return true
+          case 'ArrowRight':
+            dispatch({ type: 'SET_STYLE_LETTER_SPACING', spacing: (ann.letterSpacing ?? 0) + 1 })
+            return true
+          case 'ArrowLeft':
+            dispatch({ type: 'SET_STYLE_LETTER_SPACING', spacing: (ann.letterSpacing ?? 0) - 1 })
+            return true
+          default:
+            return false
+        }
+      }
+
+      const step = shiftKey ? 1 : 10
+      let dx = 0
+      let dy = 0
+      switch (key) {
+        case 'ArrowLeft':
+          dx = -step
+          break
+        case 'ArrowRight':
+          dx = step
+          break
+        case 'ArrowUp':
+          dy = -step
+          break
+        case 'ArrowDown':
+          dy = step
+          break
+        default:
+          return false
+      }
+      const dPdfX = dx / s.scale
+      const dPdfY = -dy / s.scale
+      if (isTextAnnotation(ann)) {
+        dispatch({
+          type: 'PATCH_ANNOTATIONS',
+          updater: (list) =>
+            list.map((a) =>
+              a.id === sid && a.kind === 'text' ? { ...a, x: a.x + dPdfX, y: a.y + dPdfY } : a,
+            ),
+        })
+      } else {
+        dispatch({
+          type: 'PATCH_ANNOTATIONS',
+          updater: (list) =>
+            list.map((a) => {
+              if (a.id !== sid || a.kind !== 'pen') return a
+              return {
+                ...a,
+                segments: a.segments.map((seg) => seg.map((p) => ({ x: p.x + dPdfX, y: p.y + dPdfY }))),
+              }
+            }),
+        })
+      }
+      return true
+    },
+    [],
+  )
+
   const bindGlobalKeys = useCallback(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!getPdfJsDocument()) return
@@ -1168,59 +1263,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     }
 
     const onArrow = (e: KeyboardEvent) => {
-      const sid = stateRef.current.selectedId
-      if (sid === null || !getPdfJsDocument()) return
       if (isFormFieldTarget(e.target)) return
-      const step = e.shiftKey ? 1 : 10
-      let dx = 0
-      let dy = 0
-      switch (e.key) {
-        case 'ArrowLeft':
-          dx = -step
-          break
-        case 'ArrowRight':
-          dx = step
-          break
-        case 'ArrowUp':
-          dy = -step
-          break
-        case 'ArrowDown':
-          dy = step
-          break
-        default:
-          return
-      }
-      const s = stateRef.current
-      const ann = s.annotations.find((a) => a.id === sid)
-      if (!ann || ann.page !== s.currentPage) return
-      e.preventDefault()
-      const dPdfX = dx / s.scale
-      const dPdfY = -dy / s.scale
-      if (isTextAnnotation(ann)) {
-        dispatch({
-          type: 'PATCH_ANNOTATIONS',
-          updater: (list) =>
-            list.map((a) =>
-              a.id === sid && a.kind === 'text'
-                ? { ...a, x: a.x + dPdfX, y: a.y + dPdfY }
-                : a,
-            ),
-        })
-      } else {
-        dispatch({
-          type: 'PATCH_ANNOTATIONS',
-          updater: (list) =>
-            list.map((a) => {
-              if (a.id !== sid || a.kind !== 'pen') return a
-              return {
-                ...a,
-                segments: a.segments.map((seg) =>
-                  seg.map((p) => ({ x: p.x + dPdfX, y: p.y + dPdfY })),
-                ),
-              }
-            }),
-        })
-      }
+      if (nudgeSelectedAnnotation(e.key, e.shiftKey, e.ctrlKey || e.metaKey)) e.preventDefault()
     }
 
     window.addEventListener('keydown', onKey)
@@ -1229,7 +1273,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('keydown', onArrow)
     }
-  }, [commitActivePenIfAny, deleteAnnotationById, finalizeShiftPenCompose])
+  }, [commitActivePenIfAny, deleteAnnotationById, finalizeShiftPenCompose, nudgeSelectedAnnotation])
 
   const bindShiftPenFinalize = useCallback(() => {
     const onKeyUp = (e: KeyboardEvent) => {
@@ -1299,6 +1343,10 @@ export function EditorProvider({ children }: { children: ReactNode }) {
               ? prefs.styleFontSize
               : undefined,
           currentBold: typeof prefs.currentBold === 'boolean' ? prefs.currentBold : undefined,
+          styleLetterSpacing:
+            typeof prefs.styleLetterSpacing === 'number' && Number.isFinite(prefs.styleLetterSpacing)
+              ? prefs.styleLetterSpacing
+              : undefined,
           penStrokeWidthPdf:
             typeof prefs.penStrokeWidthPdf === 'number' && Number.isFinite(prefs.penStrokeWidthPdf)
               ? prefs.penStrokeWidthPdf
@@ -1327,6 +1375,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         styleFontId: state.styleFontId,
         styleFontSize: state.styleFontSize,
         currentBold: state.currentBold,
+        styleLetterSpacing: state.styleLetterSpacing,
         penStrokeWidthPdf: state.penStrokeWidthPdf,
         highlightStrokeWidthPdf: state.highlightStrokeWidthPdf,
         colorHex: state.currentColor.hex,
@@ -1338,6 +1387,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     state.styleFontId,
     state.styleFontSize,
     state.currentBold,
+    state.styleLetterSpacing,
     state.penStrokeWidthPdf,
     state.highlightStrokeWidthPdf,
     state.currentColor.hex,
@@ -1457,6 +1507,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     deleteAnnotationById,
     setHoveredAnnotationId,
     toggleBold,
+    nudgeSelectedAnnotation,
     bindCanvasListeners,
     bindGlobalKeys,
     bindShiftPenFinalize,

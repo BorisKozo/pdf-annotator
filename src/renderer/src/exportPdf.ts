@@ -72,6 +72,54 @@ function splitBidiRuns(text: string): { rtl: boolean; s: string }[] {
  * draw them in visual (reversed) order, and let fontkit handle per-run
  * reversal of Hebrew/Arabic characters while leaving digit runs untouched.
  */
+/**
+ * Width of text including characterSpacing contribution.
+ * pdf-lib 1.17.1 doesn't implement characterSpacing in drawText, so we draw
+ * character-by-character and track cursor manually. Each glyph advances by
+ * its natural width + one characterSpacing gap, hence n chars → n gaps total.
+ */
+function effectiveWidth(font: PDFFont, text: string, size: number, characterSpacing: number): number {
+  return font.widthOfTextAtSize(text, size) + characterSpacing * [...text].length
+}
+
+/**
+ * Draw text with per-character spacing by iterating one codepoint at a time.
+ * `reverseChars` must be true for RTL runs so glyphs land in visual (not
+ * logical) order — fontkit would reverse a multi-char RTL string automatically,
+ * but single-char calls don't get reversed.
+ *
+ * Standard (WinAnsi) fonts throw when asked to draw a codepoint outside
+ * U+0000-U+00FF (e.g. Hebrew with Helvetica/Times/Courier — the UI warns
+ * against this combination, but annotations saved before that warning existed
+ * could still hit it). Skip undrawable characters rather than crashing the
+ * whole export; the cursor still advances using the font's fallback width.
+ */
+function drawCharsWithSpacing(
+  page: PDFPage,
+  text: string,
+  x: number,
+  y: number,
+  size: number,
+  font: PDFFont,
+  color: ReturnType<typeof rgb>,
+  characterSpacing: number,
+  reverseChars: boolean,
+): void {
+  const chars = [...text]
+  if (reverseChars) chars.reverse()
+  let cursor = x
+  for (const char of chars) {
+    let width: number
+    try {
+      width = font.widthOfTextAtSize(char, size)
+      page.drawText(char, { x: cursor, y, size, font, color })
+    } catch {
+      width = size * 0.5
+    }
+    cursor += width + characterSpacing
+  }
+}
+
 function drawTextBidi(
   page: PDFPage,
   text: string,
@@ -81,9 +129,14 @@ function drawTextBidi(
   size: number,
   color: ReturnType<typeof rgb>,
   font: PDFFont,
+  characterSpacing = 0,
 ): void {
   if (!rtl) {
-    page.drawText(text, { x: anchorX, y, size, font, color })
+    if (characterSpacing > 0) {
+      drawCharsWithSpacing(page, text, anchorX, y, size, font, color, characterSpacing, false)
+    } else {
+      page.drawText(text, { x: anchorX, y, size, font, color })
+    }
     return
   }
 
@@ -91,15 +144,19 @@ function drawTextBidi(
 
   if (runs.length === 1) {
     // Pure RTL (or pure neutral) – single draw call, fontkit handles reversal.
-    const w = font.widthOfTextAtSize(text, size)
-    page.drawText(text, { x: anchorX - w, y, size, font, color })
+    const w = effectiveWidth(font, text, size, characterSpacing)
+    if (characterSpacing > 0) {
+      drawCharsWithSpacing(page, text, anchorX - w, y, size, font, color, characterSpacing, true)
+    } else {
+      page.drawText(text, { x: anchorX - w, y, size, font, color })
+    }
     return
   }
 
   // Calculate total advance width across all runs.
   let total = 0
   for (const run of runs) {
-    total += font.widthOfTextAtSize(run.s, size)
+    total += effectiveWidth(font, run.s, size, characterSpacing)
   }
 
   // Draw in visual order: RTL paragraph = reverse the run order.
@@ -132,8 +189,12 @@ function drawTextBidi(
         text = text.slice(trimmed.length) + trimmed
       }
     }
-    page.drawText(text, { x: cursor, y, size, font, color })
-    cursor += font.widthOfTextAtSize(text, size)
+    if (characterSpacing > 0) {
+      drawCharsWithSpacing(page, text, cursor, y, size, font, color, characterSpacing, run.rtl)
+    } else {
+      page.drawText(text, { x: cursor, y, size, font, color })
+    }
+    cursor += effectiveWidth(font, text, size, characterSpacing)
     isFirstVisualRun = false
   }
 }
@@ -162,12 +223,13 @@ function drawSegmented(
   color: ReturnType<typeof rgb>,
   fontHe: PDFFont,
   fontLat: PDFFont,
+  characterSpacing = 0,
 ): void {
   const segs = segmentForBoldPdf(text)
   let total = 0
   for (const seg of segs) {
     const font = seg.hebrew ? fontHe : fontLat
-    if (seg.s) total += font.widthOfTextAtSize(seg.s, size)
+    if (seg.s) total += effectiveWidth(font, seg.s, size, characterSpacing)
   }
   let cursor = rtl ? anchorX - total : anchorX
   // For RTL, draw runs in visual order (reversed) so Hebrew words land on the
@@ -193,8 +255,12 @@ function drawSegmented(
         text = text.slice(trimmed.length) + trimmed
       }
     }
-    page.drawText(text, { x: cursor, y, size, font, color })
-    cursor += font.widthOfTextAtSize(text, size)
+    if (characterSpacing > 0) {
+      drawCharsWithSpacing(page, text, cursor, y, size, font, color, characterSpacing, seg.hebrew)
+    } else {
+      page.drawText(text, { x: cursor, y, size, font, color })
+    }
+    cursor += effectiveWidth(font, text, size, characterSpacing)
     isFirstVisualSeg = false
   }
 }
@@ -314,15 +380,16 @@ export async function buildAnnotatedPdfBytes(
     }
 
     const rtl = getTextDirection(ann.text) === 'rtl'
+    const cs = ann.letterSpacing ?? 0
     const resolved = await resolveFont(ann.fontId, ann.bold === true)
     if (resolved.segmented) {
       const he = resolved.bold ? boldHe : regularHe
       const lat = resolved.bold ? boldLat : regularLat
       if (he && lat) {
-        drawSegmented(page, ann.text, ann.x, rtl, ann.y, ann.size, color, he, lat)
+        drawSegmented(page, ann.text, ann.x, rtl, ann.y, ann.size, color, he, lat, cs)
       }
     } else {
-      drawTextBidi(page, ann.text, ann.x, rtl, ann.y, ann.size, color, resolved.font)
+      drawTextBidi(page, ann.text, ann.x, rtl, ann.y, ann.size, color, resolved.font, cs)
     }
   }
 

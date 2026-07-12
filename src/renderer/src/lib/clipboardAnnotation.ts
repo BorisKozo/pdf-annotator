@@ -16,6 +16,7 @@ export function cloneAnnotationForClipboard(ann: Annotation): Annotation {
       fontId: ann.fontId,
       size: ann.size,
       bold: ann.bold,
+      letterSpacing: ann.letterSpacing,
       r: ann.r,
       g: ann.g,
       b: ann.b,
@@ -63,6 +64,7 @@ export function annotationPastedCenteredAt(
     const family = getFontEntry(template.fontId).cssFamily
     ctx.save()
     ctx.font = `${template.bold === true ? 'bold ' : ''}${template.size * scale}px ${family}`
+    if (template.letterSpacing) ctx.letterSpacing = `${template.letterSpacing * scale}px`
     const wCss = ctx.measureText(template.text).width
     ctx.restore()
     const w = wCss / scale

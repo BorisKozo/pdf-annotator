@@ -22,9 +22,10 @@ export type EditorState = {
   editorMode: EditorMode
   penStrokeWidthPdf: number
   highlightStrokeWidthPdf: number
-  /** Font/size for new text and for the sidebar when a text annotation is selected. */
+  /** Font/size/spacing for new text and for the sidebar when a text annotation is selected. */
   styleFontId: string
   styleFontSize: number
+  styleLetterSpacing: number
   statusFileLabel: string
   statusAnnotationsLabel: string
   coordsLabel: string
@@ -54,6 +55,7 @@ export const initialEditorState: EditorState = {
   highlightStrokeWidthPdf: 5,
   styleFontId: FONT_CATALOG[0]!.id,
   styleFontSize: 14,
+  styleLetterSpacing: 0,
   statusFileLabel: '—',
   statusAnnotationsLabel: '—',
   coordsLabel: '—',
@@ -92,9 +94,11 @@ export type EditorAction =
       size: number
       bold: boolean
       color: InkColor
+      letterSpacing: number
     }
   | { type: 'SET_STYLE_FONT'; fontId: string }
   | { type: 'SET_STYLE_FONT_SIZE'; size: number }
+  | { type: 'SET_STYLE_LETTER_SPACING'; spacing: number }
   | { type: 'SYNC_FROM_PEN_ANN'; color: InkColor; strokeWidth: number }
   | { type: 'SELECT_ID'; id: number | null }
   | { type: 'DELETE_ANNOTATION'; id: number }
@@ -123,6 +127,7 @@ export type EditorAction =
       penStrokeWidthPdf?: number
       highlightStrokeWidthPdf?: number
       currentColor?: InkColor
+      styleLetterSpacing?: number
     }
   | { type: 'PDF_CLOSED' }
 
@@ -209,6 +214,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         styleFontSize: action.size,
         currentBold: action.bold,
         currentColor: action.color,
+        styleLetterSpacing: action.letterSpacing,
       }
     case 'SET_STYLE_FONT': {
       const next = { ...state, styleFontId: action.fontId }
@@ -232,6 +238,21 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         ...next,
         annotations: state.annotations.map((a) =>
           a.id === state.selectedId && a.kind === 'text' ? { ...a, size: v } : a,
+        ),
+      }
+    }
+    case 'SET_STYLE_LETTER_SPACING': {
+      const v = Math.max(0, action.spacing)
+      const next = { ...state, styleLetterSpacing: v }
+      if (state.selectedId === null) return next
+      const target = state.annotations.find((a) => a.id === state.selectedId)
+      if (!target || target.kind !== 'text') return next
+      return {
+        ...next,
+        annotations: state.annotations.map((a) =>
+          a.id === state.selectedId && a.kind === 'text'
+            ? { ...a, letterSpacing: v > 0 ? v : undefined }
+            : a,
         ),
       }
     }
@@ -390,6 +411,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       if (action.highlightStrokeWidthPdf !== undefined)
         next.highlightStrokeWidthPdf = action.highlightStrokeWidthPdf
       if (action.currentColor !== undefined) next.currentColor = action.currentColor
+      if (action.styleLetterSpacing !== undefined) next.styleLetterSpacing = action.styleLetterSpacing
       return next
     }
     case 'PDF_CLOSED':

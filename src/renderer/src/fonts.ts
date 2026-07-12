@@ -54,6 +54,11 @@ export function getFontEntry(id: string): FontEntry {
   return FONT_CATALOG.find((f) => f.id === id) ?? FONT_CATALOG[0]!
 }
 
+/** Standard (WinAnsi) fonts can't encode Hebrew; only custom embedded fonts can. */
+export function fontSupportsHebrew(id: string): boolean {
+  return !getFontEntry(id).standardFont
+}
+
 /**
  * pdf-lib embed keys for segmented subset fonts (Hebrew+Latin in one annotation).
  * Regular = weight 500 (Medium) — renders noticeably heavier than the default
