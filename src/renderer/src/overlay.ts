@@ -222,6 +222,73 @@ export function findAnnotationAtCanvasPoint(
   return null
 }
 
+/** All annotations on the page whose ink/box covers the point, in the input array's order. */
+export function findAllAnnotationsAtCanvasPoint(
+  ctx: CanvasRenderingContext2D,
+  canvasHeight: number,
+  scale: number,
+  pageOneBased: number,
+  px: number,
+  py: number,
+  annotations: Annotation[],
+): Annotation[] {
+  const list = annotations.filter((a) => a.page === pageOneBased)
+  return list.filter((ann) => {
+    if (isTextAnnotation(ann)) return hitTestAnnotation(ctx, canvasHeight, scale, px, py, ann)
+    if (isPenAnnotation(ann)) return hitTestPenAnnotation(canvasHeight, scale, px, py, ann)
+    return false
+  })
+}
+
+function distanceToSegmentSq(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const lenSq = dx * dx + dy * dy
+  if (lenSq === 0) {
+    const ex = px - ax
+    const ey = py - ay
+    return ex * ex + ey * ey
+  }
+  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
+  t = Math.max(0, Math.min(1, t))
+  const cx = ax + t * dx
+  const cy = ay + t * dy
+  const ex = px - cx
+  const ey = py - cy
+  return ex * ex + ey * ey
+}
+
+function hitTestPenAnnotation(
+  canvasHeight: number,
+  scale: number,
+  px: number,
+  py: number,
+  ann: Extract<Annotation, { kind: 'pen' }>,
+): boolean {
+  const tolerance = Math.max((ann.strokeWidth * scale) / 2, 6)
+  const toleranceSq = tolerance * tolerance
+  for (const seg of ann.segments) {
+    if (seg.length === 1) {
+      const p = pdfPointToCanvas(seg[0]!, canvasHeight, scale)
+      if (distanceToSegmentSq(px, py, p.cx, p.cy, p.cx, p.cy) <= toleranceSq) return true
+      continue
+    }
+    for (let i = 1; i < seg.length; i++) {
+      const a = pdfPointToCanvas(seg[i - 1]!, canvasHeight, scale)
+      const b = pdfPointToCanvas(seg[i]!, canvasHeight, scale)
+      if (distanceToSegmentSq(px, py, a.cx, a.cy, b.cx, b.cy) <= toleranceSq) return true
+    }
+  }
+  return false
+}
+
 function hitTestAnnotation(
   ctx: CanvasRenderingContext2D,
   canvasHeight: number,

@@ -14,7 +14,8 @@ import { flushSync } from 'react-dom'
 import { buildAnnotatedPdfBytes } from '../exportPdf'
 import { fontSupportsHebrew, getFontEntry } from '../fonts'
 import { getTextDirection } from '../bidi'
-import { drawAnnotationOverlay, findAnnotationAtCanvasPoint } from '../overlay'
+import { drawAnnotationOverlay, findAllAnnotationsAtCanvasPoint, findAnnotationAtCanvasPoint } from '../overlay'
+import { annotationsSortedLikeList } from '../lib/annotationSort'
 import { closePdf, openPdfFromBuffer, renderPdfPage, getPdfJsDocument } from '../pdfSession'
 import type { Annotation, PdfPoint, TextAnnotation } from '../types'
 import { isPenAnnotation, isTextAnnotation } from '../types'
@@ -1098,12 +1099,44 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    /**
+     * Right-click selects the annotation under the cursor. If several overlap,
+     * repeated right-clicks cycle through them in list order (page asc, id asc):
+     * none of them selected -> pick the first; the currently-selected one is
+     * among them -> pick the next, wrapping from the last back to the first.
+     */
+    const onStackContextMenu = (e: MouseEvent) => {
+      if (e.target !== pdfCanvas && e.target !== overlay) return
+      e.preventDefault()
+      if (!getPdfJsDocument()) return
+      if (isFormFieldTarget(e.target)) return
+      const s = stateRef.current
+      const bm = bitmapFromClient(e.clientX, e.clientY)
+      if (!bm) return
+      const ctx = overlay.getContext('2d')
+      if (!ctx) return
+      const hits = findAllAnnotationsAtCanvasPoint(
+        ctx,
+        bm.bh,
+        s.scale,
+        s.currentPage,
+        bm.px,
+        bm.py,
+        annotationsSortedLikeList(s.annotations),
+      )
+      if (hits.length === 0) return
+      const curIdx = s.selectedId === null ? -1 : hits.findIndex((a) => a.id === s.selectedId)
+      const next = curIdx === -1 ? hits[0]! : hits[(curIdx + 1) % hits.length]!
+      void selectAnnotationById(next.id)
+    }
+
     stack.addEventListener('pointerdown', onPointerDown)
     stack.addEventListener('pointerup', endPen)
     stack.addEventListener('pointercancel', endPen)
     stack.addEventListener('pointermove', onPointerMove)
     stack.addEventListener('click', onStackClick)
     stack.addEventListener('dblclick', onStackDblClick)
+    stack.addEventListener('contextmenu', onStackContextMenu)
 
     return () => {
       stack.removeEventListener('pointerdown', onPointerDown)
@@ -1112,6 +1145,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       stack.removeEventListener('pointermove', onPointerMove)
       stack.removeEventListener('click', onStackClick)
       stack.removeEventListener('dblclick', onStackDblClick)
+      stack.removeEventListener('contextmenu', onStackContextMenu)
     }
   }, [
     commitActivePenIfAny,
@@ -1130,25 +1164,77 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       const ann = s.annotations.find((a) => a.id === sid)
       if (!ann || ann.page !== s.currentPage) return false
 
-      // Ctrl+Arrow adjusts text style (size / letter spacing) instead of moving.
+      // Ctrl+Arrow adjusts style/shape instead of moving.
       if (ctrlKey) {
-        if (!isTextAnnotation(ann)) return false
-        switch (key) {
-          case 'ArrowUp':
-            dispatch({ type: 'SET_STYLE_FONT_SIZE', size: ann.size + 1 })
-            return true
-          case 'ArrowDown':
-            dispatch({ type: 'SET_STYLE_FONT_SIZE', size: ann.size - 1 })
-            return true
-          case 'ArrowRight':
-            dispatch({ type: 'SET_STYLE_LETTER_SPACING', spacing: (ann.letterSpacing ?? 0) + 1 })
-            return true
-          case 'ArrowLeft':
-            dispatch({ type: 'SET_STYLE_LETTER_SPACING', spacing: (ann.letterSpacing ?? 0) - 1 })
-            return true
-          default:
-            return false
+        if (isTextAnnotation(ann)) {
+          switch (key) {
+            case 'ArrowUp':
+              dispatch({ type: 'SET_STYLE_FONT_SIZE', size: ann.size + 1 })
+              return true
+            case 'ArrowDown':
+              dispatch({ type: 'SET_STYLE_FONT_SIZE', size: ann.size - 1 })
+              return true
+            case 'ArrowRight':
+              dispatch({ type: 'SET_STYLE_LETTER_SPACING', spacing: (ann.letterSpacing ?? 0) + 1 })
+              return true
+            case 'ArrowLeft':
+              dispatch({ type: 'SET_STYLE_LETTER_SPACING', spacing: (ann.letterSpacing ?? 0) - 1 })
+              return true
+            default:
+              return false
+          }
         }
+        if (isPenAnnotation(ann)) {
+          // Same 10% scale factor either way; height/width only pick which
+          // dimension the step is nominally taken from — the ratio (and thus
+          // result) is identical, so aspect ratio is always preserved.
+          let factor: number
+          switch (key) {
+            case 'ArrowUp':
+            case 'ArrowRight':
+              factor = 1.1
+              break
+            case 'ArrowDown':
+            case 'ArrowLeft':
+              factor = 0.9
+              break
+            default:
+              return false
+          }
+          let minX = Infinity
+          let minY = Infinity
+          let maxX = -Infinity
+          let maxY = -Infinity
+          for (const seg of ann.segments) {
+            for (const p of seg) {
+              minX = Math.min(minX, p.x)
+              minY = Math.min(minY, p.y)
+              maxX = Math.max(maxX, p.x)
+              maxY = Math.max(maxY, p.y)
+            }
+          }
+          if (minX === Infinity) return false
+          const cx = (minX + maxX) / 2
+          const cy = (minY + maxY) / 2
+          dispatch({
+            type: 'PATCH_ANNOTATIONS',
+            updater: (list) =>
+              list.map((a) => {
+                if (a.id !== sid || a.kind !== 'pen') return a
+                return {
+                  ...a,
+                  segments: a.segments.map((seg) =>
+                    seg.map((p) => ({
+                      x: cx + (p.x - cx) * factor,
+                      y: cy + (p.y - cy) * factor,
+                    })),
+                  ),
+                }
+              }),
+          })
+          return true
+        }
+        return false
       }
 
       const step = shiftKey ? 1 : 10
