@@ -90,6 +90,10 @@ export type EditorContextValue = {
   toggleBold: () => void
   /** Nudges the selected annotation by arrow key; returns true if it moved (key handled). */
   nudgeSelectedAnnotation: (key: string, shiftKey: boolean, ctrlKey: boolean) => boolean
+  undo: () => void
+  redo: () => void
+  canUndo: boolean
+  canRedo: boolean
   bindCanvasListeners: () => () => void
   bindGlobalKeys: () => () => void
   bindShiftPenFinalize: () => () => void
@@ -286,7 +290,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
 
   const applyColor = useCallback(
     (hex: string) => {
-      dispatch({ type: 'APPLY_COLOR_TO_SELECTED_TEXT', color: inkColorFromHex(hex) })
+      dispatch({ type: 'APPLY_COLOR_TO_SELECTED', color: inkColorFromHex(hex) })
     },
     [],
   )
@@ -726,7 +730,11 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         })
       } else if (isPenAnnotation(ann)) {
         dispatch({ type: 'SYNC_COLOR_UI', color: inkColorFromHex(ann.hex) })
-        dispatch({ type: 'SET_PEN_WIDTH', width: ann.strokeWidth })
+        const isHighlightAnn = ann.opacity !== undefined && ann.opacity < 1
+        dispatch({
+          type: isHighlightAnn ? 'SET_HIGHLIGHT_WIDTH' : 'SET_PEN_WIDTH',
+          width: ann.strokeWidth,
+        })
       }
     },
     [finalizeShiftPenCompose, redrawOverlayOnly],
@@ -756,6 +764,14 @@ export function EditorProvider({ children }: { children: ReactNode }) {
 
   const toggleBold = useCallback(() => {
     dispatch({ type: 'TOGGLE_BOLD_TO_SELECTION' })
+  }, [])
+
+  const undo = useCallback(() => {
+    dispatch({ type: 'UNDO' })
+  }, [])
+
+  const redo = useCallback(() => {
+    dispatch({ type: 'REDO' })
   }, [])
 
   const warnIfFontMismatch = (fontId: string, text: string): void => {
@@ -1124,7 +1140,10 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         bm.py,
         annotationsSortedLikeList(s.annotations),
       )
-      if (hits.length === 0) return
+      if (hits.length === 0) {
+        if (s.selectedId !== null) dispatch({ type: 'SELECT_ID', id: null })
+        return
+      }
       const curIdx = s.selectedId === null ? -1 : hits.findIndex((a) => a.id === s.selectedId)
       const next = curIdx === -1 ? hits[0]! : hits[(curIdx + 1) % hits.length]!
       void selectAnnotationById(next.id)
@@ -1308,6 +1327,18 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       const mod = e.ctrlKey || e.metaKey
       if (!mod) return
 
+      if (e.code === 'KeyZ' && !e.shiftKey) {
+        e.preventDefault()
+        undo()
+        return
+      }
+
+      if ((e.code === 'KeyZ' && e.shiftKey) || e.code === 'KeyY') {
+        e.preventDefault()
+        redo()
+        return
+      }
+
       if (e.code === 'KeyC') {
         const sid = stateRef.current.selectedId
         if (sid === null) return
@@ -1359,7 +1390,14 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('keydown', onArrow)
     }
-  }, [commitActivePenIfAny, deleteAnnotationById, finalizeShiftPenCompose, nudgeSelectedAnnotation])
+  }, [
+    commitActivePenIfAny,
+    deleteAnnotationById,
+    finalizeShiftPenCompose,
+    nudgeSelectedAnnotation,
+    redo,
+    undo,
+  ])
 
   const bindShiftPenFinalize = useCallback(() => {
     const onKeyUp = (e: KeyboardEvent) => {
@@ -1594,6 +1632,10 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     setHoveredAnnotationId,
     toggleBold,
     nudgeSelectedAnnotation,
+    undo,
+    redo,
+    canUndo: state.annotationsPast.length > 0,
+    canRedo: state.annotationsFuture.length > 0,
     bindCanvasListeners,
     bindGlobalKeys,
     bindShiftPenFinalize,

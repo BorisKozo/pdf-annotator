@@ -197,6 +197,10 @@ export function Toolbar() {
     openAnnotationsFlow,
     closePdfFlow,
     changePage,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
   } = useEditor()
   const { totalPages, currentPage, pdfSourceBytes, lastAutosaveAt } = state
   const pageLabel = totalPages > 0 ? `${currentPage} / ${totalPages}` : '—'
@@ -224,6 +228,30 @@ export function Toolbar() {
           pdfLoaded={pdfSourceBytes !== null}
           canSave={canSave}
         />
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className="inline-flex h-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-2.5 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
+            id="btn-undo"
+            aria-label="Undo"
+            title="Undo (Ctrl+Z)"
+            disabled={!canUndo}
+            onClick={() => undo()}
+          >
+            ↶
+          </button>
+          <button
+            type="button"
+            className="inline-flex h-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-2.5 text-xs text-[var(--text)] hover:border-[rgba(255,255,255,0.15)] disabled:cursor-not-allowed disabled:opacity-35"
+            id="btn-redo"
+            aria-label="Redo"
+            title="Redo (Ctrl+Shift+Z)"
+            disabled={!canRedo}
+            onClick={() => redo()}
+          >
+            ↷
+          </button>
+        </div>
       </div>
       <div className="relative flex min-w-0 flex-1 items-center">
         <div

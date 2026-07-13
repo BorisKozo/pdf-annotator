@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, protocol, Menu } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readFile, writeFile, unlink, mkdir } from 'node:fs/promises'
@@ -15,6 +15,10 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ])
+
+// The app has its own in-page File menu (Toolbar/FileMenu) — hide Electron's
+// native menu bar entirely so it doesn't show a second, redundant one.
+Menu.setApplicationMenu(null)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 

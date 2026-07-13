@@ -37,6 +37,12 @@ export type EditorState = {
   nextFavoriteId: number
   /** When set, the next click on the document inserts this favorite centered there. */
   pendingFavoritePasteId: number | null
+  /** Undo/redo snapshots of `annotations`. Managed entirely by the editorReducer wrapper below. */
+  annotationsPast: Annotation[][]
+  annotationsFuture: Annotation[][]
+  /** Tracks the in-flight coalescing group so rapid same-target edits (slider drags,
+   *  arrow-key repeat) collapse into a single undo step. */
+  lastHistoryEdit: { key: string; time: number } | null
 }
 
 export const initialEditorState: EditorState = {
@@ -64,6 +70,9 @@ export const initialEditorState: EditorState = {
   favorites: [],
   nextFavoriteId: 1,
   pendingFavoritePasteId: null,
+  annotationsPast: [],
+  annotationsFuture: [],
+  lastHistoryEdit: null,
 }
 
 export type EditorAction =
@@ -83,7 +92,7 @@ export type EditorAction =
   | { type: 'SET_ZOOM'; scale: number }
   | { type: 'SET_MODE'; mode: EditorMode }
   | { type: 'SYNC_COLOR_UI'; color: InkColor }
-  | { type: 'APPLY_COLOR_TO_SELECTED_TEXT'; color: InkColor }
+  | { type: 'APPLY_COLOR_TO_SELECTED'; color: InkColor }
   | { type: 'SET_BOLD'; bold: boolean }
   | { type: 'TOGGLE_BOLD_TO_SELECTION' }
   | { type: 'SET_PEN_WIDTH'; width: number }
@@ -130,12 +139,14 @@ export type EditorAction =
       styleLetterSpacing?: number
     }
   | { type: 'PDF_CLOSED' }
+  | { type: 'UNDO' }
+  | { type: 'REDO' }
 
 function baseName(pathOrName: string): string {
   return pathOrName.replace(/\\/g, '/').split('/').pop() ?? 'document.pdf'
 }
 
-export function editorReducer(state: EditorState, action: EditorAction): EditorState {
+function editorReducerCore(state: EditorState, action: EditorAction): EditorState {
   switch (action.type) {
     case 'PDF_OPENED': {
       const buf = action.buffer.slice(0)
@@ -172,19 +183,25 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case 'SET_ZOOM':
       return { ...state, scale: action.scale, selectedId: null }
     case 'SET_MODE':
-      return { ...state, editorMode: action.mode }
+      // Deselect: otherwise the style/color controls for the newly chosen tool
+      // (which double as "edit the selected annotation") would silently keep
+      // editing whatever was selected under the previous tool.
+      return { ...state, editorMode: action.mode, selectedId: null }
     case 'SYNC_COLOR_UI':
       return { ...state, currentColor: action.color }
-    case 'APPLY_COLOR_TO_SELECTED_TEXT': {
+    case 'APPLY_COLOR_TO_SELECTED': {
       if (state.selectedId === null) return { ...state, currentColor: action.color }
       const ann = state.annotations.find((a) => a.id === state.selectedId)
-      if (!ann || ann.kind !== 'text') return { ...state, currentColor: action.color }
+      if (!ann || (ann.kind !== 'text' && ann.kind !== 'pen')) {
+        return { ...state, currentColor: action.color }
+      }
       const { r, g, b, hex } = action.color
+      if (ann.hex === hex) return { ...state, currentColor: action.color }
       return {
         ...state,
         currentColor: action.color,
         annotations: state.annotations.map((a) =>
-          a.id === state.selectedId && a.kind === 'text' ? { ...a, r, g, b, hex } : a,
+          a.id === state.selectedId ? { ...a, r, g, b, hex } : a,
         ),
       }
     }
@@ -203,10 +220,36 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         ),
       }
     }
-    case 'SET_PEN_WIDTH':
-      return { ...state, penStrokeWidthPdf: action.width }
-    case 'SET_HIGHLIGHT_WIDTH':
-      return { ...state, highlightStrokeWidthPdf: action.width }
+    case 'SET_PEN_WIDTH': {
+      const next = { ...state, penStrokeWidthPdf: action.width }
+      if (state.selectedId === null) return next
+      const target = state.annotations.find((a) => a.id === state.selectedId)
+      const isHighlightAnn = target?.kind === 'pen' && target.opacity !== undefined && target.opacity < 1
+      if (!target || target.kind !== 'pen' || isHighlightAnn || target.strokeWidth === action.width) {
+        return next
+      }
+      return {
+        ...next,
+        annotations: state.annotations.map((a) =>
+          a.id === state.selectedId && a.kind === 'pen' ? { ...a, strokeWidth: action.width } : a,
+        ),
+      }
+    }
+    case 'SET_HIGHLIGHT_WIDTH': {
+      const next = { ...state, highlightStrokeWidthPdf: action.width }
+      if (state.selectedId === null) return next
+      const target = state.annotations.find((a) => a.id === state.selectedId)
+      const isHighlightAnn = target?.kind === 'pen' && target.opacity !== undefined && target.opacity < 1
+      if (!target || target.kind !== 'pen' || !isHighlightAnn || target.strokeWidth === action.width) {
+        return next
+      }
+      return {
+        ...next,
+        annotations: state.annotations.map((a) =>
+          a.id === state.selectedId && a.kind === 'pen' ? { ...a, strokeWidth: action.width } : a,
+        ),
+      }
+    }
     case 'LOAD_TEXT_STYLE_FROM_ANN':
       return {
         ...state,
@@ -220,7 +263,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const next = { ...state, styleFontId: action.fontId }
       if (state.selectedId === null) return next
       const target = state.annotations.find((a) => a.id === state.selectedId)
-      if (!target || target.kind !== 'text') return next
+      if (!target || target.kind !== 'text' || target.fontId === action.fontId) return next
       return {
         ...next,
         annotations: state.annotations.map((a) =>
@@ -233,7 +276,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const next = { ...state, styleFontSize: v }
       if (state.selectedId === null) return next
       const target = state.annotations.find((a) => a.id === state.selectedId)
-      if (!target || target.kind !== 'text') return next
+      if (!target || target.kind !== 'text' || target.size === v) return next
       return {
         ...next,
         annotations: state.annotations.map((a) =>
@@ -246,7 +289,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const next = { ...state, styleLetterSpacing: v }
       if (state.selectedId === null) return next
       const target = state.annotations.find((a) => a.id === state.selectedId)
-      if (!target || target.kind !== 'text') return next
+      if (!target || target.kind !== 'text' || (target.letterSpacing ?? 0) === v) return next
       return {
         ...next,
         annotations: state.annotations.map((a) =>
@@ -429,5 +472,85 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       }
     default:
       return state
+  }
+}
+
+/** Undo steps merge when they touch the same target within this window (ms). */
+const HISTORY_COALESCE_WINDOW_MS = 800
+/** Cap on stored undo snapshots to bound memory over a long session. */
+const HISTORY_LIMIT = 100
+
+function restoreAnnotationsSnapshot(
+  state: EditorState,
+  snapshot: Annotation[],
+  past: Annotation[][],
+  future: Annotation[][],
+): EditorState {
+  const selectedId =
+    state.selectedId !== null && snapshot.some((a) => a.id === state.selectedId)
+      ? state.selectedId
+      : null
+  return {
+    ...state,
+    annotations: snapshot,
+    selectedId,
+    annotationsPast: past,
+    annotationsFuture: future,
+  }
+}
+
+/**
+ * Wraps editorReducerCore with undo/redo bookkeeping. Content edits are detected
+ * generically by reference: the core reducer only replaces `state.annotations`
+ * when it actually changes (untouched actions spread `state` and keep the same
+ * array), so no per-action-type allowlist is needed for the common case.
+ */
+export function editorReducer(state: EditorState, action: EditorAction): EditorState {
+  if (action.type === 'UNDO') {
+    if (state.annotationsPast.length === 0) return state
+    const past = state.annotationsPast.slice(0, -1)
+    const snapshot = state.annotationsPast[state.annotationsPast.length - 1]!
+    const future = [...state.annotationsFuture, state.annotations]
+    return restoreAnnotationsSnapshot(state, snapshot, past, future)
+  }
+  if (action.type === 'REDO') {
+    if (state.annotationsFuture.length === 0) return state
+    const future = state.annotationsFuture.slice(0, -1)
+    const snapshot = state.annotationsFuture[state.annotationsFuture.length - 1]!
+    const past = [...state.annotationsPast, state.annotations]
+    return restoreAnnotationsSnapshot(state, snapshot, past, future)
+  }
+
+  const next = editorReducerCore(state, action)
+
+  // New document context: editorReducerCore already reset these fields via the
+  // `...initialEditorState` spread in PDF_OPENED / PDF_CLOSED.
+  if (action.type === 'PDF_OPENED' || action.type === 'PDF_CLOSED') return next
+
+  if (action.type === 'IMPORT_ANNOTATIONS') {
+    // Replace = a wholesale new annotation set; reset history like opening a document.
+    if (action.mode === 'replace') {
+      return { ...next, annotationsPast: [], annotationsFuture: [], lastHistoryEdit: null }
+    }
+    // Append: content changes but is explicitly excluded from undo tracking.
+    return next
+  }
+
+  if (next.annotations === state.annotations) return next
+
+  const key = `${action.type}:${state.selectedId ?? 'none'}`
+  const now = Date.now()
+  const coalescing =
+    state.lastHistoryEdit !== null &&
+    state.lastHistoryEdit.key === key &&
+    now - state.lastHistoryEdit.time < HISTORY_COALESCE_WINDOW_MS
+
+  return {
+    ...next,
+    annotationsPast: coalescing
+      ? state.annotationsPast
+      : [...state.annotationsPast, state.annotations].slice(-HISTORY_LIMIT),
+    annotationsFuture: [],
+    lastHistoryEdit: { key, time: now },
   }
 }
